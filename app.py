@@ -1,4 +1,4 @@
- import os
+import os
 import pandas as pd
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
@@ -109,4 +109,4 @@ def bot_whatsapp():
     return str(resp)
 
 if __name__ == "__main__":
-    app.run()
+    app.run() 
