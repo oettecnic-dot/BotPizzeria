@@ -21,7 +21,7 @@ def bot_whatsapp():
             "1️⃣ Pizzas 🍕\n"
             "2️⃣ Empanadas 🥟\n"
             "3️⃣ Promos y Combos 🎉\n\n"
-            "💡 También podés escribir directamente el código de un producto (ej: P14 o E01) para ver sus ingredientes y precio."
+            "💡 También podés escribir directamente el código de un producto o combo (ej: P14 o COMBO01) para ver sus detalles."
         )
         msg.body(welcome_text)
         
@@ -75,13 +75,16 @@ def bot_whatsapp():
                 if codigo and codigo != 'nan':
                     promos_texto += f"🎁 [{codigo}] {nombre} - ${precio}\n"
                     
-            promos_texto += "\n*(Escribí 'hola' para volver al menú principal)*"
+            promos_texto += "\n*(Escribí el código, ej: COMBO01, para ver el detalle)*"
             msg.body(promos_texto)
         except Exception as e:
             msg.body("Hubo un error al leer las promos.")
         
     else:
         try:
+            encontrado = False
+            
+            # 1. Buscar en solapa Menu y Productos
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
             resultado = df[df.iloc[:, 0].astype(str).str.strip().str.lower() == incoming_msg_lower]
             
@@ -101,8 +104,33 @@ def bot_whatsapp():
                     f"*(Escribí 'hola' para volver al menú principal)*"
                 )
                 msg.body(detalle_texto)
+                encontrado = True
             else:
-                msg.body("No reconocí tu mensaje. Escribí 'hola' para ver el menú principal.")
+                # 2. Si no está, buscar en solapa Promociones y Combos
+                df_promos = pd.read_excel(EXCEL_FILE, sheet_name='Promociones y Combos')
+                resultado_promos = df_promos[df_promos.iloc[:, 0].astype(str).str.strip().str.lower() == incoming_msg_lower]
+                
+                if not resultado_promos.empty:
+                    row = resultado_promos.iloc[0]
+                    codigo = str(row.iloc[0]).strip()
+                    nombre = str(row.iloc[2]).strip()
+                    descripcion = str(row.iloc[3]).strip()
+                    precio = str(row.iloc[4]).strip()
+                    
+                    detalle_texto = (
+                        f"🎉 *Promo Encontrada:*\n\n"
+                        f"▪️ *Código:* {codigo}\n"
+                        f"▪️ *Combo:* {nombre}\n"
+                        f"▪️ *Detalle:* {descripcion}\n"
+                        f"▪️ *Precio:* ${precio}\n\n"
+                        f"*(Escribí 'hola' para volver al menú principal)*"
+                    )
+                    msg.body(detalle_texto)
+                    encontrado = True
+
+            if not encontrado:
+                msg.body("No reconocí el código ingresado. Escribí 'hola' para ver el menú principal.")
+                
         except Exception as e:
             msg.body("No reconocí tu mensaje. Escribí 'hola' para ver el menú principal.")
 
