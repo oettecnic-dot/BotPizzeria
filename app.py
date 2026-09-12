@@ -18,8 +18,8 @@ def bot_whatsapp():
         welcome_text = (
             "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
             "¿Qué consulta deseás realizar hoy? Por favor, elegí una opción:\n"
-            "1️⃣ Ver Catálogo Completo (Pizzas y Empanadas)\n"
-            "2️⃣ Consulta por código (ej: escribí P14 o E01 directamente)\n"
+            "1️⃣ Ver Catálogo Completo\n"
+            "2️⃣ Consulta por código (escribí el código directamente, ej: P14)\n"
             "3️⃣ Consulta por Promos y Combos\n\n"
             "Respondé con el número de la opción o el código del producto."
         )
@@ -28,15 +28,16 @@ def bot_whatsapp():
     elif incoming_msg_lower == "1" or "catálogo" in incoming_msg_lower:
         try:
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            catalogo_texto = "📄 *Nuestras Pizzas y Empanadas:*\n\n"
+            catalogo_texto = "📄 *Catálogo Completo de Productos:*\n\n"
             
-            for index, row in df.head(15).iterrows():
+            # Recorre TODAS las filas del Excel sin cortes
+            for index, row in df.iterrows():
                 codigo = str(row.get('Codigo', '')).strip()
                 producto = row.get('Producto/ Variedad', '')
                 precio = row.get('Precio ($)', '')
-                catalogo_texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
+                if codigo and codigo != 'nan':
+                    catalogo_texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
                 
-            catalogo_texto += "\n(Escribí directamente el código, ej: P14, para ver los ingredientes)"
             msg.body(catalogo_texto)
         except Exception as e:
             msg.body("Hubo un error al leer el archivo de productos.")
@@ -60,7 +61,6 @@ def bot_whatsapp():
         # Búsqueda por código de producto en el Excel
         try:
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            # Busca si el código escrito coincide con alguna fila (sin importar mayúsculas/minúsculas)
             resultado = df[df['Codigo'].astype(str).str.strip().str.lower() == incoming_msg_lower]
             
             if not resultado.empty:
@@ -79,7 +79,7 @@ def bot_whatsapp():
                 )
                 msg.body(detalle_texto)
             else:
-                msg.body("No reconocí el código ingresado. Escribí 'hola' para ver el menú principal o probá con otro código (ej: P01).")
+                msg.body("No reconocí el código ingresado. Escribí 'hola' para ver el menú principal.")
         except Exception as e:
             msg.body("No reconocí tu mensaje. Escribí 'hola' para ver el menú principal.")
 
