@@ -28,17 +28,14 @@ def bot_whatsapp():
         
     elif "1" in incoming_msg:
         try:
-            # Lee la solapa 'Menu y Productos' del Excel
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            
             catalogo_texto = "📄 *Catálogo Completo de Productos:*\n\n"
-            # Recorre las filas del Excel para armar la lista (ajusta los nombres de las columnas según tu planilla)
+            
             for index, row in df.iterrows():
-                # Suponiendo que tus columnas se llaman 'Codigo', 'Producto' y 'Precio'
-                codigo = row.get('Codigo', index)
-                nombre = row.get('Producto', 'Sin nombre')
-                precio = row.get('Precio', '')
-                catalogo_texto += f"▪️ [{codigo}] {nombre} - ${precio}\n"
+                codigo = row.get('Codigo', '')
+                producto = row.get('Producto/ Variedad', '')
+                precio = row.get('Precio ($)', '')
+                catalogo_texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
                 
             msg.body(catalogo_texto)
         except Exception as e:
@@ -48,7 +45,20 @@ def bot_whatsapp():
         msg.body("Por favor, ingresa el código del producto que deseas consultar (ej: P01).")
         
     elif "3" in incoming_msg:
-        msg.body("Aquí tienes nuestras Promos y Combos vigentes. 🎉")
+        try:
+            df_promos = pd.read_excel(EXCEL_FILE, sheet_name='Promociones y Combos')
+            promos_texto = "🎉 *Promos y Combos Vigentes:*\n\n"
+            
+            for index, row in df_promos.iterrows():
+                codigo = row.get('Codigo', '')
+                nombre = row.get('Producto/ Variedad', '')
+                descripcion = row.get('Descripción/Ingredientes', '')
+                precio = row.get('Precio ($)', '')
+                promos_texto += f"🎁 *[{codigo}] {nombre}* (${precio})\n   _{descripcion}_\n\n"
+                
+            msg.body(promos_texto)
+        except Exception as e:
+            msg.body("Hubo un error al leer las promos. Por favor, intenta más tarde.")
         
     else:
         msg.body("No reconocí tu mensaje. Escribí 'hola' para ver el menú principal.")
