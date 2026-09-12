@@ -1,4 +1,4 @@
-import os
+ import os
 import pandas as pd
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
@@ -28,38 +28,40 @@ def bot_whatsapp():
     elif incoming_msg_lower in ["1", "pizzas"]:
         try:
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            pizzas = df[df['Categoria'].astype(str).str.strip().str.lower() == 'pizzas']
-            
             texto = "🍕 *LISTA DE PIZZAS:*\n\n"
-            for _, row in pizzas.iterrows():
-                codigo = str(row.get('Codigo', '')).strip()
-                producto = str(row.get('Producto/ Variedad', '')).strip()
-                precio = str(row.get('Precio ($)', '')).strip()
-                if codigo and codigo != 'nan':
+            
+            for _, row in df.iterrows():
+                codigo = str(row.iloc[0]).strip()
+                categoria = str(row.iloc[1]).strip().lower()
+                producto = str(row.iloc[2]).strip()
+                precio = str(row.iloc[4]).strip()
+                
+                if "pizza" in categoria and codigo and codigo != 'nan':
                     texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
                     
             texto += "\n*(Escribí el código para ver ingredientes o 'hola' para volver al menú)*"
             msg.body(texto)
         except Exception as e:
-            msg.body(f"Error en Pizzas: {str(e)}")
+            msg.body("Hubo un error al leer las pizzas.")
         
     elif incoming_msg_lower in ["2", "empanadas"]:
         try:
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            empanadas = df[df['Categoria'].astype(str).str.strip().str.lower() == 'empanadas']
-            
             texto = "🥟 *LISTA DE EMPANADAS:*\n\n"
-            for _, row in empanadas.iterrows():
-                codigo = str(row.get('Codigo', '')).strip()
-                producto = str(row.get('Producto/ Variedad', '')).strip()
-                precio = str(row.get('Precio ($)', '')).strip()
-                if codigo and codigo != 'nan':
+            
+            for _, row in df.iterrows():
+                codigo = str(row.iloc[0]).strip()
+                categoria = str(row.iloc[1]).strip().lower()
+                producto = str(row.iloc[2]).strip()
+                precio = str(row.iloc[4]).strip()
+                
+                if "empanada" in categoria and codigo and codigo != 'nan':
                     texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
                     
             texto += "\n*(Escribí el código para ver ingredientes o 'hola' para volver al menú)*"
             msg.body(texto)
         except Exception as e:
-            msg.body(f"Error en Empanadas: {str(e)}")
+            msg.body("Hubo un error al leer las empanadas.")
         
     elif incoming_msg_lower in ["3", "promos", "combos"]:
         try:
@@ -67,28 +69,28 @@ def bot_whatsapp():
             promos_texto = "🎉 *Promos y Combos Vigentes:*\n\n"
             
             for _, row in df_promos.iterrows():
-                codigo = str(row.get('Codigo', '')).strip()
-                nombre = str(row.get('Producto/ Variedad', '')).strip()
-                precio = str(row.get('Precio ($)', '')).strip()
+                codigo = str(row.iloc[0]).strip()
+                nombre = str(row.iloc[2]).strip()
+                precio = str(row.iloc[4]).strip()
                 if codigo and codigo != 'nan':
                     promos_texto += f"🎁 [{codigo}] {nombre} - ${precio}\n"
                     
             promos_texto += "\n*(Escribí 'hola' para volver al menú principal)*"
             msg.body(promos_texto)
         except Exception as e:
-            msg.body(f"Error en Promos: {str(e)}")
+            msg.body("Hubo un error al leer las promos.")
         
     else:
         try:
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            resultado = df[df['Codigo'].astype(str).str.strip().str.lower() == incoming_msg_lower]
+            resultado = df[df.iloc[:, 0].astype(str).str.strip().str.lower() == incoming_msg_lower]
             
             if not resultado.empty:
                 row = resultado.iloc[0]
-                codigo = row.get('Codigo', '')
-                producto = row.get('Producto/ Variedad', '')
-                descripcion = row.get('Descripción/Ingredientes', '')
-                precio = row.get('Precio ($)', '')
+                codigo = str(row.iloc[0]).strip()
+                producto = str(row.iloc[2]).strip()
+                descripcion = str(row.iloc[3]).strip()
+                precio = str(row.iloc[4]).strip()
                 
                 detalle_texto = (
                     f"🍕 *Producto Encontrado:*\n\n"
@@ -107,4 +109,4 @@ def bot_whatsapp():
     return str(resp)
 
 if __name__ == "__main__":
-    app.run() 
+    app.run()
