@@ -18,7 +18,7 @@ def bot_whatsapp():
         welcome_text = (
             "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
             "¿Qué consulta deseás realizar hoy? Por favor, elegí una opción:\n"
-            "1️⃣ Ver Catálogo Completo (Pizzas y Empanadas)\n"
+            "1️⃣ Ver Catálogo Completo\n"
             "2️⃣ Consulta por código (escribí el código directamente, ej: P14)\n"
             "3️⃣ Consulta por Promos y Combos\n\n"
             "Respondé con el número de la opción o el código del producto."
@@ -28,26 +28,22 @@ def bot_whatsapp():
     elif incoming_msg_lower == "1" or "catálogo" in incoming_msg_lower:
         try:
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
+            catalogo_texto = "📄 *Catálogo Completo:*\n"
             
-            # Filtramos por Pizzas
-            pizzas = df[df['Categoria'].astype(str).str.strip().str.lower() == 'pizzas']
-            catalogo_texto = "🍕 *PIZZAS:*\n"
-            for _, row in pizzas.iterrows():
+            categoria_actual = ""
+            for _, row in df.iterrows():
                 codigo = str(row.get('Codigo', '')).strip()
-                producto = row.get('Producto/ Variedad', '')
-                precio = row.get('Precio ($)', '')
-                catalogo_texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
+                categoria = str(row.get('Categoria', '')).strip()
+                producto = str(row.get('Producto/ Variedad', '')).strip()
+                precio = str(row.get('Precio ($)', '')).strip()
                 
-            # Filtramos por Empanadas
-            empanadas = df[df['Categoria'].astype(str).str.strip().str.lower() == 'empanadas']
-            catalogo_texto += "\n🥟 *EMPANADAS:*\n"
-            for _, row in empanadas.iterrows():
-                codigo = str(row.get('Codigo', '')).strip()
-                producto = row.get('Producto/ Variedad', '')
-                precio = row.get('Precio ($)', '')
-                catalogo_texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
+                if codigo and codigo != 'nan' and producto != 'nan':
+                    if categoria != categoria_actual:
+                        categoria_actual = categoria
+                        catalogo_texto += f"\n*{categoria_actual.upper()}*\n"
+                    catalogo_texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
                 
-            catalogo_texto += "\n*(Escribí el código, ej: P14 o E01, para ver ingredientes)*"
+            catalogo_texto += "\n*(Escribí el código, ej: P14, para ver ingredientes)*"
             msg.body(catalogo_texto)
         except Exception as e:
             msg.body("Hubo un error al leer el archivo de productos.")
@@ -59,9 +55,10 @@ def bot_whatsapp():
             
             for index, row in df_promos.iterrows():
                 codigo = str(row.get('Codigo', '')).strip()
-                nombre = row.get('Producto/ Variedad', '')
-                precio = row.get('Precio ($)', '')
-                promos_texto += f"🎁 [{codigo}] {nombre} - ${precio}\n"
+                nombre = str(row.get('Producto/ Variedad', '')).strip()
+                precio = str(row.get('Precio ($)', '')).strip()
+                if codigo and codigo != 'nan':
+                    promos_texto += f"🎁 [{codigo}] {nombre} - ${precio}\n"
                 
             msg.body(promos_texto)
         except Exception as e:
