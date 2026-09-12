@@ -1,10 +1,13 @@
 import os
+import pandas as pd
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
-# Configuración del Bot para Pizzería Pedidos y Delivery
+# Cargar el archivo de Excel del catálogo
+EXCEL_FILE = "Menu y Promos Comercio.xlsx"
+
 @app.route('/bot', methods=["POST"])
 def bot_whatsapp():
     incoming_msg = request.values.get('Body', '').strip().lower()
@@ -24,7 +27,22 @@ def bot_whatsapp():
         msg.body(welcome_text)
         
     elif "1" in incoming_msg:
-        msg.body("Aquí tienes el enlace o la información de nuestro Catálogo Completo. 📄 (Pronto agregaremos el listado detallado)")
+        try:
+            # Lee la solapa 'Menu y Productos' del Excel
+            df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
+            
+            catalogo_texto = "📄 *Catálogo Completo de Productos:*\n\n"
+            # Recorre las filas del Excel para armar la lista (ajusta los nombres de las columnas según tu planilla)
+            for index, row in df.iterrows():
+                # Suponiendo que tus columnas se llaman 'Codigo', 'Producto' y 'Precio'
+                codigo = row.get('Codigo', index)
+                nombre = row.get('Producto', 'Sin nombre')
+                precio = row.get('Precio', '')
+                catalogo_texto += f"▪️ [{codigo}] {nombre} - ${precio}\n"
+                
+            msg.body(catalogo_texto)
+        except Exception as e:
+            msg.body("Hubo un error al leer el catálogo de productos. Por favor, intenta más tarde.")
         
     elif "2" in incoming_msg:
         msg.body("Por favor, ingresa el código del producto que deseas consultar (ej: P01).")
