@@ -22,6 +22,16 @@ def bot_whatsapp():
             "Respondé con el número de la opción que prefieras."
         )
         msg.body(welcome_text)
+        
+    elif "1" in incoming_msg:
+        msg.body("Aquí tienes el enlace o la información de nuestro Catálogo Completo. 📄 (Pronto agregaremos el listado detallado)")
+        
+    elif "2" in incoming_msg:
+        msg.body("Por favor, ingresa el código del producto que deseas consultar (ej: P01).")
+        
+    elif "3" in incoming_msg:
+        msg.body("Aquí tienes nuestras Promos y Combos vigentes. 🎉")
+        
     else:
         msg.body("No reconocí tu mensaje. Escribí 'hola' para ver el menú principal.")
 
