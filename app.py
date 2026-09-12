@@ -41,7 +41,7 @@ def bot_whatsapp():
             texto += "\n*(Escribí el código para ver ingredientes o 'hola' para volver al menú)*"
             msg.body(texto)
         except Exception as e:
-            msg.body("Hubo un error al leer las pizzas.")
+            msg.body(f"Error en Pizzas: {str(e)}")
         
     elif incoming_msg_lower in ["2", "empanadas"]:
         try:
@@ -59,7 +59,7 @@ def bot_whatsapp():
             texto += "\n*(Escribí el código para ver ingredientes o 'hola' para volver al menú)*"
             msg.body(texto)
         except Exception as e:
-            msg.body("Hubo un error al leer las empanadas.")
+            msg.body(f"Error en Empanadas: {str(e)}")
         
     elif incoming_msg_lower in ["3", "promos", "combos"]:
         try:
@@ -76,10 +76,9 @@ def bot_whatsapp():
             promos_texto += "\n*(Escribí 'hola' para volver al menú principal)*"
             msg.body(promos_texto)
         except Exception as e:
-            msg.body("Hubo un error al leer las promos.")
+            msg.body(f"Error en Promos: {str(e)}")
         
     else:
-        # Búsqueda por código de producto en el Excel
         try:
             df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
             resultado = df[df['Codigo'].astype(str).str.strip().str.lower() == incoming_msg_lower]
@@ -89,7 +88,7 @@ def bot_whatsapp():
                 codigo = row.get('Codigo', '')
                 producto = row.get('Producto/ Variedad', '')
                 descripcion = row.get('Descripción/Ingredientes', '')
-                precio = row.get('Precio ($', '')
+                precio = row.get('Precio ($)', '')
                 
                 detalle_texto = (
                     f"🍕 *Producto Encontrado:*\n\n"
