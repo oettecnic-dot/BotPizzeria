@@ -38,58 +38,76 @@ def bot_whatsapp():
     # 1. Activación con el saludo "hola" o similar
     if any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
         welcome_text = (
-            "¡Hola! Te damos la bienvenida a *Pizzería Pedidos y Delivery* 🍕👋\n\n"
-            "¿Qué consulta deseás realizar hoy?\n\n"
-            "Por favor, respondé con el número de la opción:\n"
-            "1️⃣ Ver catálogo completo\n"
-            "2️⃣ Consultar por algún producto por código\n"
-            "3️⃣ Consultar promos o combos\n\n"
-            "💡 *Tip:* Para sumar un producto al pedido, simplemente escribí su código (ej: `P01`). Para ver tu cuenta, escribí *'total'*."
+            "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
+            "¿Qué deseas ver hoy? Elegí una opción:\n"
+            "1️⃣ Pizzas 🍕\n"
+            "2️⃣ Empanadas 🥟\n"
+            "3️⃣ Promos y Combos 🎉\n\n"
+            "💡 También podés escribir directamente el código de un producto o combo (ej: P14 o COMBO01) para ver sus detalles."
         )
         msg.body(welcome_text)
     
-    # 2. Opción 1: Ver catálogo completo (CORREGIDO para mostrar todos los productos del menú)
+    # 2. Opción 1: Filtrar y mostrar solo Pizzas 🍕
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
-            catalogo_resumen = "📋 *Catálogo Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
+            # Buscamos filas que pertenezcan a la categoría de Pizzas (ajustá la palabra clave si tu Excel usa otra denominación)
+            pizzas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('pizza', case=False).any(), axis=1)]
             
-            # Verificamos si existe una columna de categoría para agruparlos de forma ordenada
-            if 'Categoria' in df_menu.columns or 'Categoría' in df_menu.columns:
-                col_cat = 'Categoria' if 'Categoria' in df_menu.columns else 'Categoría'
-                for categoria, grupo in df_menu.groupby(col_cat):
-                    catalogo_resumen += f"*{categoria}*\n"
-                    for _, row in grupo.iterrows():
-                        catalogo_resumen += f"• `{row['Codigo']}` - {row['Producto/ Variedad']}: ${row['Precio ($)']}\n"
-                    catalogo_resumen += "\n"
-            else:
-                # Si no hay columna de categoría, los muestra todos sin el límite de 15
-                for _, row in df_menu.iterrows():
-                    catalogo_resumen += f"• `{row['Codigo']}` - {row['Producto/ Variedad']}: ${row['Precio ($)']}\n"
-            
-            catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido).* "
+            if pizzas.empty:
+                pizzas = df_menu # Si no encuentra categoría específica, muestra todo el menú general
+                
+            catalogo_resumen = "🍕 *Catálogo de Pizzas* 🍕\n\n"
+            for _, row in pizzas.iterrows():
+                # Tratamos de ubicar las columnas comunes de código, producto y precio
+                codigo = row.get('Codigo', row.iloc[0])
+                nombre = row.get('Producto/ Variedad', row.iloc[1])
+                precio = row.get('Precio ($)', row.iloc[-1])
+                catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                
+            catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             msg.body(catalogo_resumen)
         else:
-            msg.body("📋 *Catálogo Completo*\n\nEstamos actualizando nuestra base de datos. ¡En instantes te enviamos el detalle!")
+            msg.body("🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas. ¡En instantes te enviamos el detalle!")
 
-    # 3. Opción 2: Consultar por algún producto por código
+    # 3. Opción 2: Filtrar y mostrar solo Empanadas 🥟
     elif msg_lower == "2":
-        msg.body(
-            "🔍 *Consulta por Producto por Código*\n\n"
-            "Por favor, escribí el código exacto del producto que querés pedir (por ejemplo: `P01`, `E01`, `S01`, `COMBO01`) y lo sumaremos automáticamente a tu carrito."
-        )
+        df_menu, _ = obtener_datos_excel()
+        if df_menu is not None:
+            empanadas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('empanada', case=False).any(), axis=1)]
+            
+            if empanadas.empty:
+                empanadas = df_menu
+                
+            catalogo_resumen = "🥟 *Catálogo de Empanadas* 🥟\n\n"
+            for _, row in empanadas.iterrows():
+                codigo = row.get('Codigo', row.iloc[0])
+                nombre = row.get('Producto/ Variedad', row.iloc[1])
+                precio = row.get('Precio ($)', row.iloc[-1])
+                catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                
+            catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
+            msg.body(catalogo_resumen)
+        else:
+            msg.body("🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas. ¡En instantes te enviamos el detalle!")
 
-    # 4. Opción 3: Consultar promos o combos
+    # 4. Opción 3: Consultar promos o combos 🎉
     elif msg_lower == "3":
         _, df_promos = obtener_datos_excel()
         if df_promos is not None:
-            promos_resumen = "🔥 *Promos y Combos Vigentes* 🍕🍻\n\n"
-            for index, row in df_promos.iterrows():
-                promos_resumen += f"• *{row['Codigo']}* - *{row['Producto/ Variedad']}*\n  _{row['Descripción/Ingredientes']}_\n  Precio: *${row['Precio ($)']}*\n\n"
+            promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
+            for _, row in df_promos.iterrows():
+                codigo = row.get('Codigo', row.iloc[0])
+                nombre = row.get('Producto/ Variedad', row.iloc[1])
+                desc = row.get('Descripción/Ingredientes', '')
+                precio = row.get('Precio ($)', row.iloc[-1])
+                
+                promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
             msg.body(promos_resumen)
         else:
-            msg.body("🔥 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas.")
+            promos_resumen = "🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas."
+            msg.body(promos_resumen)
 
     # 5. Ver el total y el carrito actual
     elif msg_lower in ["total", "carrito", "pedido"]:
@@ -119,7 +137,6 @@ def bot_whatsapp():
         else:
             total_apagar = sum(item['precio'] for item in carrito)
             msg.body(f"✅ ¡Pedido confirmado con éxito!\n\nEl total de tu compra es de *${total_apagar}*.\nEn breve nos pondremos en contacto para coordinar la entrega y el pago. ¡Muchas gracias por elegirnos! 🍕")
-            # Vaciamos el carrito tras la confirmación
             carritos_clientes[remitente] = []
 
     else:
@@ -136,7 +153,7 @@ def bot_whatsapp():
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
         
-        # Si não está en el menú, buscamos en promos y combos
+        # Si no está en el menú, buscamos en promos y combos
         if not producto_encontrado and df_promos is not None:
             match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
@@ -162,7 +179,7 @@ def bot_whatsapp():
                 "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
             )
 
-    # Retorna la respuesta generada a Twilio
+    # Devuelve la respuesta obligatoria a Twilio
     return str(resp)
 
 if __name__ == "__main__":
