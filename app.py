@@ -48,13 +48,25 @@ def bot_whatsapp():
         )
         msg.body(welcome_text)
     
-    # 2. Opción 1: Ver catálogo completo
+    # 2. Opción 1: Ver catálogo completo (CORREGIDO para mostrar todos los productos del menú)
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             catalogo_resumen = "📋 *Catálogo Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
-            for index, row in df_menu.head(15).iterrows():
-                catalogo_resumen += f"• *{row['Codigo']}* - {row['Producto/ Variedad']}: ${row['Precio ($)']}\n"
+            
+            # Verificamos si existe una columna de categoría para agruparlos de forma ordenada
+            if 'Categoria' in df_menu.columns or 'Categoría' in df_menu.columns:
+                col_cat = 'Categoria' if 'Categoria' in df_menu.columns else 'Categoría'
+                for categoria, grupo in df_menu.groupby(col_cat):
+                    catalogo_resumen += f"*{categoria}*\n"
+                    for _, row in grupo.iterrows():
+                        catalogo_resumen += f"• `{row['Codigo']}` - {row['Producto/ Variedad']}: ${row['Precio ($)']}\n"
+                    catalogo_resumen += "\n"
+            else:
+                # Si no hay columna de categoría, los muestra todos sin el límite de 15
+                for _, row in df_menu.iterrows():
+                    catalogo_resumen += f"• `{row['Codigo']}` - {row['Producto/ Variedad']}: ${row['Precio ($)']}\n"
+            
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido).* "
             msg.body(catalogo_resumen)
         else:
@@ -124,7 +136,7 @@ def bot_whatsapp():
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
         
-        # Si no está en el menú, buscamos en promos y combos
+        # Si não está en el menú, buscamos en promos y combos
         if not producto_encontrado and df_promos is not None:
             match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
@@ -150,7 +162,7 @@ def bot_whatsapp():
                 "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
             )
 
-    # ¡ESTO ES LO QUE FALTABA! Retorna la respuesta generada a Twilio
+    # Retorna la respuesta generada a Twilio
     return str(resp)
 
 if __name__ == "__main__":
