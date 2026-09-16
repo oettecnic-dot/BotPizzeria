@@ -5,8 +5,9 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
-# Memoria temporal para los carritos de cada cliente (clave: número de teléfono, valor: lista de productos)
+# Memoria temporal para los carritos y el estado de pagos de cada cliente
 carritos_clientes = {}
+pagos_clientes = {}
 
 # Función auxiliar para leer la planilla de manera segura (.xls o .xlsx)
 def obtener_datos_excel():
@@ -31,12 +32,45 @@ def bot_whatsapp():
     resp = MessagingResponse()
     msg = resp.message()
 
-    # Inicializamos el carrito del cliente si es la primera vez que escribe
+    # Inicializamos el carrito y estado de pago del cliente si es la primera vez que escribe
     if remitente not in carritos_clientes:
         carritos_clientes[remitente] = []
+    if remitente not in pagos_clientes:
+        pagos_clientes[remitente] = "ninguno"
+
+    # 0. PRIORIDAD: Si el cliente está en medio de elegir un método de pago
+    if pagos_clientes[remitente] == "pendiente":
+        if msg_lower in ["1", "2", "3"]:
+            carrito = carritos_clientes.get(remitente, [])
+            total_apagar = sum(item['precio'] for item in carrito)
+            
+            if msg_lower == "1":
+                metodo = "Efectivo (contra entrega)"
+                instrucciones = "Tené en cuenta el monto exacto si es posible para facilitar el vuelto."
+            elif msg_lower == "2":
+                metodo = "Transferencia Bancaria"
+                instrucciones = "Alias para transferir: *pizzeria.delivery.mp*\n(Envíanos el comprobante por este medio)."
+            else:
+                metodo = "Mercado Pago"
+                instrucciones = "Podés abonar con dinero en cuenta al momento de recibir o solicitar link de pago."
+
+            msg.body(
+                f"✅ ¡Pedido confirmado con éxito!\n\n"
+                f"🛒 *Total a Pagar:* ${total_apagar}\n"
+                f"💳 *Método de pago:* {metodo}\n\n"
+                f"ℹ️ {instrucciones}\n\n"
+                "En breve nos pondremos en contacto para coordinar el envío. ¡Muchas gracias por elegirnos! 🍕"
+            )
+            
+            # Limpiamos el carrito y finalizamos el estado de pago
+            carritos_clientes[remitente] = []
+            pagos_clientes[remitente] = "finalizado"
+        else:
+            msg.body("⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago")
 
     # 1. Activación con el saludo "hola" o similar
-    if any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
+    elif any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
+        pagos_clientes[remitente] = "ninguno" # Reiniciamos estado de pago si vuelve a empezar
         welcome_text = (
             "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
@@ -51,15 +85,12 @@ def bot_whatsapp():
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
-            # Buscamos filas que pertenezcan a la categoría de Pizzas (ajustá la palabra clave si tu Excel usa otra denominación)
             pizzas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('pizza', case=False).any(), axis=1)]
-            
             if pizzas.empty:
-                pizzas = df_menu # Si no encuentra categoría específica, muestra todo el menú general
+                pizzas = df_menu
                 
             catalogo_resumen = "🍕 *Catálogo de Pizzas* 🍕\n\n"
             for _, row in pizzas.iterrows():
-                # Tratamos de ubicar las columnas comunes de código, producto y precio
                 codigo = row.get('Codigo', row.iloc[0])
                 nombre = row.get('Producto/ Variedad', row.iloc[1])
                 precio = row.get('Precio ($)', row.iloc[-1])
@@ -68,14 +99,13 @@ def bot_whatsapp():
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             msg.body(catalogo_resumen)
         else:
-            msg.body("🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas. ¡En instantes te enviamos el detalle!")
+            msg.body("🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas.")
 
     # 3. Opción 2: Filtrar y mostrar solo Empanadas 🥟
     elif msg_lower == "2":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             empanadas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('empanada', case=False).any(), axis=1)]
-            
             if empanadas.empty:
                 empanadas = df_menu
                 
@@ -89,7 +119,7 @@ def bot_whatsapp():
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             msg.body(catalogo_resumen)
         else:
-            msg.body("🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas. ¡En instantes te enviamos el detalle!")
+            msg.body("🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas.")
 
     # 4. Opción 3: Consultar promos o combos 🎉
     elif msg_lower == "3":
@@ -106,8 +136,7 @@ def bot_whatsapp():
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
             msg.body(promos_resumen)
         else:
-            promos_resumen = "🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas."
-            msg.body(promos_resumen)
+            msg.body("🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas.")
 
     # 5. Ver el total y el carrito actual
     elif msg_lower in ["total", "carrito", "pedido"]:
@@ -127,17 +156,23 @@ def bot_whatsapp():
     # 6. Vaciar el carrito
     elif msg_lower in ["vaciar", "limpiar"]:
         carritos_clientes[remitente] = []
-        msg.body("🗑️ Has vaciado tu carrito. Podés volver a armar tu pedido cuando quieras escribiendo los códigos de los productos.")
+        pagos_clientes[remitente] = "ninguno"
+        msg.body("🗑️ Has vaciado tu carrito. Podés volver a armar tu pedido cuando quieras.")
 
-    # 7. Confirmar pedido
+    # 7. Iniciar confirmación de pedido (Pide elegir forma de pago)
     elif msg_lower in ["confirmar", "finalizar"]:
         carrito = carritos_clientes[remitente]
         if not carrito:
             msg.body("Tu carrito está vacío, no hay nada que confirmar.")
         else:
-            total_apagar = sum(item['precio'] for item in carrito)
-            msg.body(f"✅ ¡Pedido confirmado con éxito!\n\nEl total de tu compra es de *${total_apagar}*.\nEn breve nos pondremos en contacto para coordinar la entrega y el pago. ¡Muchas gracias por elegirnos! 🍕")
-            carritos_clientes[remitente] = []
+            pagos_clientes[remitente] = "pendiente" # Activamos el estado de selección de pago
+            msg.body(
+                "💳 *Seleccioná tu forma de pago:*\n\n"
+                "1️⃣ Efectivo (Pago contra entrega)\n"
+                "2️⃣ Transferencia Bancaria\n"
+                "3️⃣ Mercado Pago\n\n"
+                "Respondé con el número de la opción elegida (1, 2 o 3)."
+            )
 
     else:
         # Intentamos buscar si lo que escribió el cliente es un código de producto (ej: P01, E01, COMBO01)
