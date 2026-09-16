@@ -75,7 +75,7 @@ def bot_whatsapp():
     # 1. PRIORIDAD 2: Activación con el saludo "hola" o similar
     elif any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
         pagos_clientes[remitente] = "ninguno"
-        pidiendo_nombre[remitente] = True  # Activamos la bandera para capturar el nombre en el siguiente mensaje
+        pidiendo_nombre[remitente] = True  
         welcome_text = (
             "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
             "😊 ¿Cómo te llamás? Así ya te registramos para el pedido:"
@@ -85,9 +85,8 @@ def bot_whatsapp():
     # 2. PRIORIDAD 3: Si el bot estaba esperando el nombre del cliente
     elif pidiendo_nombre.get(remitente, False):
         nombres_clientes[remitente] = incoming_msg
-        pidiendo_nombre[remitente] = False  # Desactivamos la bandera
+        pidiendo_nombre[remitente] = False  
         
-        # Le saludamos por su nombre y le mostramos el menú principal de inmediato
         menu_opciones = (
             f"¡Mucho gusto, *{incoming_msg}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
@@ -98,11 +97,15 @@ def bot_whatsapp():
         )
         msg.body(menu_opciones)
 
-    # 3. Opción 1: Filtrar y mostrar solo Pizzas 🍕
+    # 3. Opción 1: Filtrar y mostrar solo Pizzas 🍕 (CORREGIDO)
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
-            pizzas = df_menu[df_menu.astype(str).str.contains('pizza', case=False).any(axis=1)]
+            try:
+                pizzas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('pizza', case=False).any(), axis=1)]
+            except Exception:
+                pizzas = df_menu
+                
             if pizzas.empty:
                 pizzas = df_menu
                 
@@ -118,11 +121,15 @@ def bot_whatsapp():
         else:
             msg.body("🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas.")
 
-    # 4. Opción 2: Filtrar y mostrar solo Empanadas 🥟
+    # 4. Opción 2: Filtrar y mostrar solo Empanadas 🥟 (CORREGIDO)
     elif msg_lower == "2":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
-            empanadas = df_menu[df_menu.astype(str).str.contains('empanada', case=False).any(axis=1)]
+            try:
+                empanadas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('empanada', case=False).any(), axis=1)]
+            except Exception:
+                empanadas = df_menu
+                
             if empanadas.empty:
                 empanadas = df_menu
                 
@@ -225,7 +232,6 @@ def bot_whatsapp():
                 f"*(Escribí 'total' para ver tu carrito o seguí agregando más productos).* "
             )
         else:
-            # Si no es un código válido ni un comando conocido
             msg.body(
                 f"Recibimos tu mensaje: \"{incoming_msg}\".\n"
                 "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
