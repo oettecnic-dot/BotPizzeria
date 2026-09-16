@@ -42,7 +42,7 @@ def bot_whatsapp():
     if remitente not in pidiendo_nombre:
         pidiendo_nombre[remitente] = False
 
-    # 0. PRIORIDAD: Si el cliente está en medio de elegir un método de pago
+    # 0. PRIORIDAD 1: Si el cliente está en medio de elegir un método de pago
     if pagos_clientes[remitente] == "pendiente":
         if msg_lower in ["1", "2", "3"]:
             carrito = carritos_clientes.get(remitente, [])
@@ -67,30 +67,39 @@ def bot_whatsapp():
                 "En breve nos pondremos en contacto para coordinar el envío. ¡Muchas gracias por elegirnos! 🍕"
             )
             
-            # Limpiamos el carrito y finalizamos el estado de pago
             carritos_clientes[remitente] = []
             pagos_clientes[remitente] = "finalizado"
         else:
             msg.body("⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago")
 
-    # 1. Activación con el saludo "hola" o similar
+    # 1. PRIORIDAD 2: Activación con el saludo "hola" o similar
     elif any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
         pagos_clientes[remitente] = "ninguno"
-        pidiendo_nombre[remitente] = True  # Activamos la bandera para capturar el nombre
+        pidiendo_nombre[remitente] = True  # Activamos la bandera para capturar el nombre en el siguiente mensaje
         welcome_text = (
             "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
+            "😊 ¿Cómo te llamás? Así ya te registramos para el pedido:"
+        )
+        msg.body(welcome_text)
+
+    # 2. PRIORIDAD 3: Si el bot estaba esperando el nombre del cliente
+    elif pidiendo_nombre.get(remitente, False):
+        nombres_clientes[remitente] = incoming_msg
+        pidiendo_nombre[remitente] = False  # Desactivamos la bandera
+        
+        # Le saludamos por su nombre y le mostramos el menú principal de inmediato
+        menu_opciones = (
+            f"¡Mucho gusto, *{incoming_msg}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
             "1️⃣ Pizzas 🍕\n"
             "2️⃣ Empanadas 🥟\n"
             "3️⃣ Promos y Combos 🎉\n\n"
-            "💡 También podés escribir directamente el código de un producto o combo (ej: P14 o COMBO01) para ver sus detalles.\n\n"
-            "😊 ¿Cómo te llamás? Así ya te registramos para el pedido:"
+            "💡 También podés escribir directamente el código de un producto o combo (ej: P14 o COMBO01) para ver sus detalles."
         )
-        msg.body(welcome_text)
-    
-    # 2. Opción 1: Filtrar y mostrar solo Pizzas 🍕
+        msg.body(menu_opciones)
+
+    # 3. Opción 1: Filtrar y mostrar solo Pizzas 🍕
     elif msg_lower == "1":
-        pidiendo_nombre[remitente] = False
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             pizzas = df_menu[df_menu.astype(str).str.contains('pizza', case=False).any(axis=1)]
@@ -109,9 +118,8 @@ def bot_whatsapp():
         else:
             msg.body("🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas.")
 
-    # 3. Opción 2: Filtrar y mostrar solo Empanadas 🥟
+    # 4. Opción 2: Filtrar y mostrar solo Empanadas 🥟
     elif msg_lower == "2":
-        pidiendo_nombre[remitente] = False
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             empanadas = df_menu[df_menu.astype(str).str.contains('empanada', case=False).any(axis=1)]
@@ -130,9 +138,8 @@ def bot_whatsapp():
         else:
             msg.body("🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas.")
 
-    # 4. Opción 3: Consultar promos o combos 🎉
+    # 5. Opción 3: Consultar promos o combos 🎉
     elif msg_lower == "3":
-        pidiendo_nombre[remitente] = False
         _, df_promos = obtener_datos_excel()
         if df_promos is not None:
             promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
@@ -148,9 +155,8 @@ def bot_whatsapp():
         else:
             msg.body("🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas.")
 
-    # 5. Ver el total y el carrito actual
+    # 6. Ver el total y el carrito actual
     elif msg_lower in ["total", "carrito", "pedido"]:
-        pidiendo_nombre[remitente] = False
         carrito = carritos_clientes[remitente]
         if not carrito:
             msg.body("🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto o combo (ej: `P01`) para empezar a sumar a tu pedido.")
@@ -164,16 +170,14 @@ def bot_whatsapp():
             detalle += f"\n💰 *Total a Pagar: ${total_apagar}*\n\n¿Deseás confirmar tu pedido? Escribí *'confirmar'*."
             msg.body(detalle)
 
-    # 6. Vaciar el carrito
+    # 7. Vaciar el carrito
     elif msg_lower in ["vaciar", "limpiar"]:
-        pidiendo_nombre[remitente] = False
         carritos_clientes[remitente] = []
         pagos_clientes[remitente] = "ninguno"
         msg.body("🗑️ Has vaciado tu carrito. Podés volver a armar tu pedido cuando quieras.")
 
-    # 7. Iniciar confirmación de pedido (Pide elegir forma de pago)
+    # 8. Iniciar confirmación de pedido (Pide elegir forma de pago)
     elif msg_lower in ["confirmar", "finalizar"]:
-        pidiendo_nombre[remitente] = False
         carrito = carritos_clientes[remitente]
         if not carrito:
             msg.body("Tu carrito está vacío, no hay nada que confirmar.")
@@ -212,7 +216,6 @@ def bot_whatsapp():
 
         # Si encontramos el producto por código, lo sumamos al carrito
         if producto_encontrado:
-            pidiendo_nombre[remitente] = False
             carritos_clientes[remitente].append(producto_encontrado)
             total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
             msg.body(
@@ -220,14 +223,6 @@ def bot_whatsapp():
                 f"• *{producto_encontrado['nombre']}* (${producto_encontrado['precio']})\n\n"
                 f"🛒 Subtotal parcial: *${total_parcial}*\n"
                 f"*(Escribí 'total' para ver tu carrito o seguí agregando más productos).* "
-            )
-        elif pidiendo_nombre.get(remitente, False):
-            # Si estábamos esperando el nombre y el mensaje no es un comando ni producto, lo guardamos como su nombre
-            nombres_clientes[remitente] = incoming_msg
-            pidiendo_nombre[remitente] = False
-            msg.body(
-                f"¡Mucho gusto, *{incoming_msg}*! 🍕👍\n\n"
-                "Ya guardé tu nombre. Ahora podés elegir una opción del menú (1, 2, 3) o enviar el código de lo que querés pedir."
             )
         else:
             # Si no es un código válido ni un comando conocido
