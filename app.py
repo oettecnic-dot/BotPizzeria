@@ -5,136 +5,151 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
-EXCEL_FILE = "Menu y Promos Comercio.xlsx"
+# Memoria temporal para los carritos de cada cliente (clave: número de teléfono, valor: lista de productos)
+carritos_clientes = {}
 
-@app.route('/bot', methods=["POST"])
+# Función auxiliar para leer la planilla de manera segura (.xls o .xlsx)
+def obtener_datos_excel():
+    excel_path = "Menu y Promos Comercio.xls"
+    if not os.path.exists(excel_path):
+        excel_path = "Menu y Promos Comercio.xlsx"
+    
+    try:
+        df_menu = pd.read_excel(excel_path, sheet_name="Menu y Productos")
+        df_promos = pd.read_excel(excel_path, sheet_name="Promociones y Combos")
+        return df_menu, df_promos
+    except Exception as e:
+        return None, None
+
+@app.route("/bot", methods=["POST"])
 def bot_whatsapp():
+    # Obtenemos el teléfono del cliente y el mensaje que envió
+    remitente = request.values.get('From', '')
     incoming_msg = request.values.get('Body', '').strip()
-    incoming_msg_lower = incoming_msg.lower()
+    msg_lower = incoming_msg.lower()
+    
     resp = MessagingResponse()
     msg = resp.message()
 
-    if any(word in incoming_msg_lower for word in ["hola", "menu", "empezar", "buenas", "inicio", "pedir"]):
+    # Inicializamos el carrito del cliente si es la primera vez que escribe
+    if remitente not in carritos_clientes:
+        carritos_clientes[remitente] = []
+
+    # 1. Activación con el saludo "hola" o similar
+    if any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
         welcome_text = (
-            "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
-            "¿Qué deseas ver hoy? Elegí una opción:\n"
-            "1️⃣ Pizzas 🍕\n"
-            "2️⃣ Empanadas 🥟\n"
-            "3️⃣ Promos y Combos 🎉\n\n"
-            "💡 También podés escribir directamente el código de un producto o combo (ej: P14 o COMBO01) para ver sus detalles."
+            "¡Hola! Te damos la bienvenida a *Pizzería Pedidos y Delivery* 🍕👋\n\n"
+            "¿Qué consulta deseás realizar hoy?\n\n"
+            "Por favor, respondé con el número de la opción:\n"
+            "1️⃣ Ver catálogo completo\n"
+            "2️⃣ Consultar por algún producto por código\n"
+            "3️⃣ Consultar promos o combos\n\n"
+            "💡 *Tip:* Para sumar un producto al pedido, simplemente escribí su código (ej: `P01`). Para ver tu cuenta, escribí *'total'*."
         )
         msg.body(welcome_text)
-        
-    elif incoming_msg_lower in ["1", "pizzas"]:
-        try:
-            df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            texto = "🍕 *LISTA DE PIZZAS:*\n\n"
+    
+    # 2. Opción 1: Ver catálogo completo
+    elif msg_lower == "1":
+        df_menu, _ = obtener_datos_excel()
+        if df_menu is not None:
+            catalogo_resumen = "📋 *Catálogo Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
+            for index, row in df_menu.head(15).iterrows():
+                catalogo_resumen += f"• *{row['Codigo']}* - {row['Producto/ Variedad']}: ${row['Precio ($)']}\n"
+            catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido).* "
+            msg.body(catalogo_resumen)
+        else:
+            msg.body("📋 *Catálogo Completo*\n\nEstamos actualizando nuestra base de datos. ¡En instantes te enviamos el detalle!")
+
+    # 3. Opción 2: Consultar por algún producto por código
+    elif msg_lower == "2":
+        msg.body(
+            "🔍 *Consulta por Producto por Código*\n\n"
+            "Por favor, escribí el código exacto del producto que querés pedir (por ejemplo: `P01`, `E01`, `S01`, `COMBO01`) y lo sumaremos automáticamente a tu carrito."
+        )
+
+    # 4. Opción 3: Consultar promos o combos
+    elif msg_lower == "3":
+        _, df_promos = obtener_datos_excel()
+        if df_promos is not None:
+            promos_resumen = "🔥 *Promos y Combos Vigentes* 🍕🍻\n\n"
+            for index, row in df_promos.iterrows():
+                promos_resumen += f"• *{row['Codigo']}* - *{row['Producto/ Variedad']}*\n  _{row['Descripción/Ingredientes']}_\n  Precio: *${row['Precio ($)']}*\n\n"
+            promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
+            msg.body(promos_resumen)
+        else:
+            msg.body("🔥 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas.")
+
+    # 5. Ver el total y el carrito actual
+    elif msg_lower in ["total", "carrito", "pedido"]:
+        carrito = carritos_clientes[remitente]
+        if not carrito:
+            msg.body("🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto o combo (ej: `P01`) para empezar a sumar a tu pedido.")
+        else:
+            detalle = "🛒 *Resumen de tu Pedido:*\n\n"
+            total_apagar = 0
+            for item in carrito:
+                detalle += f"• {item['nombre']} — ${item['precio']}\n"
+                total_apagar += item['precio']
             
-            for _, row in df.iterrows():
-                codigo = str(row.iloc[0]).strip()
-                categoria = str(row.iloc[1]).strip().lower()
-                producto = str(row.iloc[2]).strip()
-                precio = str(row.iloc[4]).strip()
-                
-                if "pizza" in categoria and codigo and codigo != 'nan':
-                    texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
-                    
-            texto += "\n*(Escribí el código para ver ingredientes o 'hola' para volver al menú)*"
-            msg.body(texto)
-        except Exception as e:
-            msg.body("Hubo un error al leer las pizzas.")
-        
-    elif incoming_msg_lower in ["2", "empanadas"]:
-        try:
-            df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            texto = "🥟 *LISTA DE EMPANADAS:*\n\n"
-            
-            for _, row in df.iterrows():
-                codigo = str(row.iloc[0]).strip()
-                categoria = str(row.iloc[1]).strip().lower()
-                producto = str(row.iloc[2]).strip()
-                precio = str(row.iloc[4]).strip()
-                
-                if "empanada" in categoria and codigo and codigo != 'nan':
-                    texto += f"▪️ [{codigo}] {producto} - ${precio}\n"
-                    
-            texto += "\n*(Escribí el código para ver ingredientes o 'hola' para volver al menú)*"
-            msg.body(texto)
-        except Exception as e:
-            msg.body("Hubo un error al leer las empanadas.")
-        
-    elif incoming_msg_lower in ["3", "promos", "combos"]:
-        try:
-            df_promos = pd.read_excel(EXCEL_FILE, sheet_name='Promociones y Combos')
-            promos_texto = "🎉 *Promos y Combos Vigentes:*\n\n"
-            
-            for _, row in df_promos.iterrows():
-                codigo = str(row.iloc[0]).strip()
-                nombre = str(row.iloc[2]).strip()
-                precio = str(row.iloc[4]).strip()
-                if codigo and codigo != 'nan':
-                    promos_texto += f"🎁 [{codigo}] {nombre} - ${precio}\n"
-                    
-            promos_texto += "\n*(Escribí el código, ej: COMBO01, para ver el detalle)*"
-            msg.body(promos_texto)
-        except Exception as e:
-            msg.body("Hubo un error al leer las promos.")
-        
+            detalle += f"\n💰 *Total a Pagar: ${total_apagar}*\n\n¿Deseás confirmar tu pedido? Escribí *'confirmar'*."
+            msg.body(detalle)
+
+    # 6. Vaciar el carrito
+    elif msg_lower in ["vaciar", "limpiar"]:
+        carritos_clientes[remitente] = []
+        msg.body("🗑️ Has vaciado tu carrito. Podés volver a armar tu pedido cuando quieras escribiendo los códigos de los productos.")
+
+    # 7. Confirmar pedido
+    elif msg_lower in ["confirmar", "finalizar"]:
+        carrito = carritos_clientes[remitente]
+        if not carrito:
+            msg.body("Tu carrito está vacío, no hay nada que confirmar.")
+        else:
+            total_apagar = sum(item['precio'] for item in carrito)
+            msg.body(f"✅ ¡Pedido confirmado con éxito!\n\nEl total de tu compra es de *${total_apagar}*.\nEn breve nos pondremos en contacto para coordinar la entrega y el pago. ¡Muchas gracias por elegirnos! 🍕")
+            # Vaciamos el carrito tras la confirmación
+            carritos_clientes[remitente] = []
+
     else:
-        try:
-            encontrado = False
-            
-            # 1. Buscar en solapa Menu y Productos
-            df = pd.read_excel(EXCEL_FILE, sheet_name='Menu y Productos')
-            resultado = df[df.iloc[:, 0].astype(str).str.strip().str.lower() == incoming_msg_lower]
-            
-            if not resultado.empty:
-                row = resultado.iloc[0]
-                codigo = str(row.iloc[0]).strip()
-                producto = str(row.iloc[2]).strip()
-                descripcion = str(row.iloc[3]).strip()
-                precio = str(row.iloc[4]).strip()
-                
-                detalle_texto = (
-                    f"🍕 *Producto Encontrado:*\n\n"
-                    f"▪️ *Código:* {codigo}\n"
-                    f"▪️ *Variedad:* {producto}\n"
-                    f"▪️ *Ingredientes:* {descripcion}\n"
-                    f"▪️ *Precio:* ${precio}\n\n"
-                    f"*(Escribí 'hola' para volver al menú principal)*"
-                )
-                msg.body(detalle_texto)
-                encontrado = True
-            else:
-                # 2. Si no está, buscar en solapa Promociones y Combos
-                df_promos = pd.read_excel(EXCEL_FILE, sheet_name='Promociones y Combos')
-                resultado_promos = df_promos[df_promos.iloc[:, 0].astype(str).str.strip().str.lower() == incoming_msg_lower]
-                
-                if not resultado_promos.empty:
-                    row = resultado_promos.iloc[0]
-                    codigo = str(row.iloc[0]).strip()
-                    nombre = str(row.iloc[2]).strip()
-                    descripcion = str(row.iloc[3]).strip()
-                    precio = str(row.iloc[4]).strip()
-                    
-                    detalle_texto = (
-                        f"🎉 *Promo Encontrada:*\n\n"
-                        f"▪️ *Código:* {codigo}\n"
-                        f"▪️ *Combo:* {nombre}\n"
-                        f"▪️ *Detalle:* {descripcion}\n"
-                        f"▪️ *Precio:* ${precio}\n\n"
-                        f"*(Escribí 'hola' para volver al menú principal)*"
-                    )
-                    msg.body(detalle_texto)
-                    encontrado = True
+        # Intentamos buscar si lo que escribió el cliente es un código de producto (ej: P01, E01, COMBO01)
+        df_menu, df_promos = obtener_datos_excel()
+        producto_encontrado = None
+        
+        # Buscamos en el menú general
+        if df_menu is not None:
+            match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
+            if not match.empty:
+                producto_encontrado = {
+                    'nombre': match.iloc[0]['Producto/ Variedad'],
+                    'precio': float(match.iloc[0]['Precio ($)'])
+                }
+        
+        # Si no está en el menú, buscamos en promos y combos
+        if not producto_encontrado and df_promos is not None:
+            match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
+            if not match.empty:
+                producto_encontrado = {
+                    'nombre': match.iloc[0]['Producto/ Variedad'],
+                    'precio': float(match.iloc[0]['Precio ($)'])
+                }
 
-            if not encontrado:
-                msg.body("No reconocí el código ingresado. Escribí 'hola' para ver el menú principal.")
-                
-        except Exception as e:
-            msg.body("No reconocí tu mensaje. Escribí 'hola' para ver el menú principal.")
-
-    return str(resp)
+        # Si encontramos el producto por código, lo sumamos al carrito
+        if producto_encontrado:
+            carritos_clientes[remitente].append(producto_encontrado)
+            total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
+            msg.body(
+                f"✅ ¡Agregado a tu pedido!\n"
+                f"• *{producto_encontrado['nombre']}* (${producto_encontrado['precio']})\n\n"
+                f"🛒 Subtotal parcial: *${total_parcial}*\n"
+                f"*(Escribí 'total' para ver tu carrito o seguí agregando más productos).* "
+            )
+        else:
+            # Si no es un código válido ni un comando conocido
+            msg.body(
+                f"Recibimos tu mensaje: \"{incoming_msg}\".\n"
+                "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
+            )
 
 if __name__ == "__main__":
-    app.run() 
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False) 
