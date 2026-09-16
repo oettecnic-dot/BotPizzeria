@@ -150,6 +150,9 @@ def bot_whatsapp():
                 "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
             )
 
+    # ¡ESTO ES LO QUE FALTABA! Retorna la respuesta generada a Twilio
+    return str(resp)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False) 
