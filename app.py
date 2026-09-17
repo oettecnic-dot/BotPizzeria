@@ -1,11 +1,11 @@
 import os
 import pandas as pd
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
-# Memoria temporal para los carritos, estados de pago y nombres de cada cliente
+# Memoria temporal para los carritos, estados de pago y nombres de cada cliente/sesión
 carritos_clientes = {}
 pagos_clientes = {}
 nombres_clientes = {}
@@ -24,87 +24,19 @@ def obtener_datos_excel():
     except Exception as e:
         return None, None
 
-# --- INTERFAZ WEB (Panel visible al entrar a tu URL de Render) ---
-@app.route("/", methods=["GET"])
-def home():
-    html_template = """
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Panel - Bot Pizzería 🍕</title>
-        <style>
-            body { font-family: Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
-            .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-            h1 { color: #d9534f; text-align: center; }
-            .status { text-align: center; font-weight: bold; color: #5cb85c; margin-bottom: 30px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-            th { background-color: #f8f9fa; }
-            .badge { background: #f0ad4e; color: white; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🍕 Panel de Control - Pizzería Bot</h1>
-            <div class="status">🟢 Bot de WhatsApp Activo y Operando</div>
-            
-            <h2>🛒 Carritos y Pedidos Activos en Memoria</h2>
-            {% if carritos %}
-                <table>
-                    <tr>
-                        <th>Teléfono / Cliente</th>
-                        <th>Productos en Carrito</th>
-                        <th>Estado de Pago</th>
-                    </tr>
-                    {% for tel, carrito in carritos.items() %}
-                    <tr>
-                        <td>
-                            <strong>{{ nombres.get(tel, 'Cliente Anónimo') }}</strong><br>
-                            <small style="color: gray;">{{ tel }}</small>
-                        </td>
-                        <td>
-                            {% if carrito %}
-                                <ul>
-                                {% for item in carrito %}
-                                    <li>{{ item.nombre }} — <strong>${{ item.precio }}</strong></li>
-                                {% endfor %}
-                                </ul>
-                            {% else %}
-                                <em>Carrito vacío</em>
-                            {% endif %}
-                        </td>
-                        <td><span class="badge">{{ pagos.get(tel, 'ninguno') }}</span></td>
-                    </tr>
-                    {% endfor %}
-                </table>
-            {% else %}
-                <p style="text-align: center; color: #777;">No hay clientes activos en este momento.</p>
-            {% endif %}
-        </div>
-    </body>
-    </html>
-    """
-    return render_template_string(html_template, carritos=carritos_clientes, pagos=pagos_clientes, nombres=nombres_clientes)
+# --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
+def procesar_logica_bot(remitente, incoming_msg):
+    msg_lower = incoming_msg.strip().lower()
 
-# --- WEBHOOK DE WHATSAPP ---
-@app.route("/bot", methods=["POST"])
-def bot_whatsapp():
-    remitente = request.values.get('From', '')
-    incoming_msg = request.values.get('Body', '').strip()
-    msg_lower = incoming_msg.lower()
-    
-    resp = MessagingResponse()
-    msg = resp.message()
-
-    # Inicializamos estructuras del cliente
+    # Inicializar estructuras si es la primera vez
     if remitente not in carritos_clientes:
         carritos_clientes[remitente] = []
     if remitente not in pagos_clientes:
         pagos_clientes[remitente] = "ninguno"
     if remitente not in pidiendo_nombre:
         pidiendo_nombre[remitente] = False
+
+    respuesta_texto = ""
 
     # 0. PRIORIDAD 1: Selección de método de pago
     if pagos_clientes[remitente] == "pendiente":
@@ -118,40 +50,37 @@ def bot_whatsapp():
                 instrucciones = "Tené en cuenta el monto exacto si es posible para facilitar el vuelto."
             elif msg_lower == "2":
                 metodo = "Transferencia Bancaria"
-                instrucciones = "Alias para transferir: *pizzeria.delivery.mp*\n(Envíanos el comprobante por este medio)."
+                instrucciones = "Alias para transferir: *pizzeria.delivery.mp*\n(Envíanos el comprobante)."
             else:
                 metodo = "Mercado Pago"
                 instrucciones = "Podés abonar con dinero en cuenta al momento de recibir o solicitar link de pago."
 
-            msg.body(
+            respuesta_texto = (
                 f"✅ ¡Pedido confirmado con éxito, {nombre_cliente}!\n\n"
-                f"🛒 *Total a Pagar:* ${total_apagar}\n"
-                f"💳 *Método de pago:* {metodo}\n\n"
+                f"🛒 Total a Pagar: ${total_apagar}\n"
+                f"💳 Método de pago: {metodo}\n\n"
                 f"ℹ️ {instrucciones}\n\n"
                 "En breve nos pondremos en contacto para coordinar el envío. ¡Muchas gracias por elegirnos! 🍕"
             )
-            
             carritos_clientes[remitente] = []
             pagos_clientes[remitente] = "finalizado"
         else:
-            msg.body("⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago")
+            respuesta_texto = "⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago"
 
     # 1. PRIORIDAD 2: Saludo inicial
     elif any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
         pagos_clientes[remitente] = "ninguno"
         pidiendo_nombre[remitente] = True  
-        welcome_text = (
+        respuesta_texto = (
             "¡Hola! Te damos la bienvenida a Pizzería Pedidos y Delivery. 🍕\n\n"
             "😊 ¿Cómo te llamás? Así ya te registramos para el pedido:"
         )
-        msg.body(welcome_text)
 
     # 2. PRIORIDAD 3: Captura de nombre
     elif pidiendo_nombre.get(remitente, False):
         nombres_clientes[remitente] = incoming_msg
         pidiendo_nombre[remitente] = False  
-        
-        menu_opciones = (
+        respuesta_texto = (
             f"¡Mucho gusto, *{incoming_msg}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
             "1️⃣ Pizzas 🍕\n"
@@ -159,7 +88,6 @@ def bot_whatsapp():
             "3️⃣ Promos y Combos 🎉\n\n"
             "💡 También podés escribir directamente el código de un producto o combo (ej: P14 o COMBO01) para ver sus detalles."
         )
-        msg.body(menu_opciones)
 
     # 3. Opción 1: Pizzas
     elif msg_lower == "1":
@@ -169,7 +97,6 @@ def bot_whatsapp():
                 pizzas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('pizza', case=False).any(), axis=1)]
             except Exception:
                 pizzas = df_menu
-                
             if pizzas.empty:
                 pizzas = df_menu
                 
@@ -179,11 +106,10 @@ def bot_whatsapp():
                 nombre = row.get('Producto/ Variedad', row.iloc[1])
                 precio = row.get('Precio ($)', row.iloc[-1])
                 catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
-                
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
-            msg.body(catalogo_resumen)
+            respuesta_texto = catalogo_resumen
         else:
-            msg.body("🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas.")
+            respuesta_texto = "🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas."
 
     # 4. Opción 2: Empanadas
     elif msg_lower == "2":
@@ -193,7 +119,6 @@ def bot_whatsapp():
                 empanadas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('empanada', case=False).any(), axis=1)]
             except Exception:
                 empanadas = df_menu
-                
             if empanadas.empty:
                 empanadas = df_menu
                 
@@ -203,11 +128,10 @@ def bot_whatsapp():
                 nombre = row.get('Producto/ Variedad', row.iloc[1])
                 precio = row.get('Precio ($)', row.iloc[-1])
                 catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
-                
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
-            msg.body(catalogo_resumen)
+            respuesta_texto = catalogo_resumen
         else:
-            msg.body("🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas.")
+            respuesta_texto = "🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas."
 
     # 5. Opción 3: Promos y Combos
     elif msg_lower == "3":
@@ -219,42 +143,40 @@ def bot_whatsapp():
                 nombre = row.get('Producto/ Variedad', row.iloc[1])
                 desc = row.get('Descripción/Ingredientes', '')
                 precio = row.get('Precio ($)', row.iloc[-1])
-                
                 promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
-            msg.body(promos_resumen)
+            respuesta_texto = promos_resumen
         else:
-            msg.body("🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas.")
+            respuesta_texto = "🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas."
 
     # 6. Ver total / carrito
     elif msg_lower in ["total", "carrito", "pedido"]:
         carrito = carritos_clientes[remitente]
         if not carrito:
-            msg.body("🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto o combo (ej: `P01`) para empezar a sumar a tu pedido.")
+            respuesta_texto = "🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto o combo (ej: `P01`) para empezar a sumar a tu pedido."
         else:
             detalle = "🛒 *Resumen de tu Pedido:*\n\n"
             total_apagar = 0
             for item in carrito:
                 detalle += f"• {item['nombre']} — ${item['precio']}\n"
                 total_apagar += item['precio']
-            
             detalle += f"\n💰 *Total a Pagar: ${total_apagar}*\n\n¿Deseás confirmar tu pedido? Escribí *'confirmar'*."
-            msg.body(detalle)
+            respuesta_texto = detalle
 
     # 7. Vaciar carrito
     elif msg_lower in ["vaciar", "limpiar"]:
         carritos_clientes[remitente] = []
         pagos_clientes[remitente] = "ninguno"
-        msg.body("🗑️ Has vaciado tu carrito. Podés volver a armar tu pedido cuando quieras.")
+        respuesta_texto = "🗑️ Has vaciado tu carrito. Podés volver a armar tu pedido cuando quieras."
 
     # 8. Confirmar pedido
     elif msg_lower in ["confirmar", "finalizar"]:
         carrito = carritos_clientes[remitente]
         if not carrito:
-            msg.body("Tu carrito está vacío, no hay nada que confirmar.")
+            respuesta_texto = "Tu carrito está vacío, no hay nada que confirmar."
         else:
             pagos_clientes[remitente] = "pendiente"
-            msg.body(
+            respuesta_texto = (
                 "💳 *Seleccioná tu forma de pago:*\n\n"
                 "1️⃣ Efectivo (Pago contra entrega)\n"
                 "2️⃣ Transferencia Bancaria\n"
@@ -286,18 +208,129 @@ def bot_whatsapp():
         if producto_encontrado:
             carritos_clientes[remitente].append(producto_encontrado)
             total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
-            msg.body(
+            respuesta_texto = (
                 f"✅ ¡Agregado a tu pedido!\n"
                 f"• *{producto_encontrado['nombre']}* (${producto_encontrado['precio']})\n\n"
                 f"🛒 Subtotal parcial: *${total_parcial}*\n"
                 f"*(Escribí 'total' para ver tu carrito o seguí agregando más productos).* "
             )
         else:
-            msg.body(
+            respuesta_texto = (
                 f"Recibimos tu mensaje: \"{incoming_msg}\".\n"
                 "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
             )
 
+    return respuesta_texto
+
+# --- RUTA WEB INTERACTIVA (Chat en la URL) ---
+@app.route("/", methods=["GET"])
+def home():
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Chat Bot - Pizzería 🍕</title>
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #e5ddd5; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
+            .chat-container { width: 100%; max-width: 450px; height: 90vh; background: #ffffff; display: flex; flex-direction: column; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); overflow: hidden; }
+            .chat-header { background: #075e54; color: white; padding: 15px; text-align: center; font-size: 18px; font-weight: bold; }
+            .chat-messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #efeae2; }
+            .message { max-width: 75%; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.4; white-space: pre-wrap; }
+            .message.user { background: #dcf8c6; align-self: flex-end; border-bottom-right-radius: 0; }
+            .message.bot { background: #ffffff; align-self: flex-start; border-bottom-left-radius: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+            .chat-input-area { display: flex; padding: 10px; background: #f0f0f0; border-top: 1px solid #ddd; }
+            .chat-input-area input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 20px; outline: none; font-size: 14px; }
+            .chat-input-area button { background: #128c7e; color: white; border: none; padding: 10px 20px; margin-left: 8px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+            .chat-input-area button:hover { background: #075e54; }
+        </style>
+    </head>
+    <body>
+        <div class="chat-container">
+            <div class="chat-header">🍕 Pizzería Bot - Chat Web</div>
+            <div class="chat-messages" id="chatMessages">
+                <div class="message bot">¡Hola! Escribí **"Hola"** para comenzar tu pedido en línea. 👋</div>
+            </div>
+            <div class="chat-input-area">
+                <input type="text" id="userInput" placeholder="Escribí un mensaje..." onkeypress="handleKeyPress(event)">
+                <button onclick="sendMessage()">Enviar</button>
+            </div>
+        </div>
+
+        <script>
+            // Generar un ID de sesión único para este navegador web
+            let sessionId = localStorage.getItem("web_session_id");
+            if (!sessionId) {
+                sessionId = "web_" + Math.random().toString(36.25).substring(2, 9);
+                localStorage.setItem("web_session_id", sessionId);
+            }
+
+            function handleKeyPress(event) {
+                if (event.key === "Enter") {
+                    sendMessage();
+                }
+            }
+
+            async function sendMessage() {
+                const input = document.getElementById("userInput");
+                const text = input.value.trim();
+                if (!text) return;
+
+                appendMessage(text, "user");
+                input.value = "";
+
+                try {
+                    const response = await fetch("/chat-api", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ message: text, session_id: sessionId })
+                    });
+                    const data = await response.json();
+                    appendMessage(data.reply, "bot");
+                } catch (error) {
+                    appendMessage("⚠️ Error de conexión con el servidor.", "bot");
+                }
+            }
+
+            function appendMessage(text, sender) {
+                const messagesContainer = document.getElementById("chatMessages");
+                const msgDiv = document.createElement("div");
+                msgDiv.className = `message ${sender}`;
+                msgDiv.innerText = text;
+                messagesContainer.appendChild(msgDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template)
+
+# --- API PARA RECIBIR MENSAJES DESDE LA WEB ---
+@app.route("/chat-api", methods=["POST"])
+def chat_api():
+    data = request.get_json()
+    incoming_msg = data.get("message", "")
+    session_id = data.get("session_id", "web_default")
+    
+    # Llamamos a la misma lógica compartida del bot
+    respuesta = procesar_logica_bot(session_id, incoming_msg)
+    
+    return jsonify({"reply": respuesta})
+
+# --- WEBHOOK DE WHATSAPP ---
+@app.route("/bot", methods=["POST"])
+def bot_whatsapp():
+    remitente = request.values.get('From', '')
+    incoming_msg = request.values.get('Body', '').strip()
+    
+    resp = MessagingResponse()
+    
+    # Llamamos a la misma lógica compartida del bot
+    respuesta = procesar_logica_bot(remitente, incoming_msg)
+    
+    resp.message(respuesta)
     return str(resp)
 
 if __name__ == "__main__":
