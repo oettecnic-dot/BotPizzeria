@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from flask import Flask, request
+from flask import Flask, request, render_template_string
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
@@ -24,9 +24,73 @@ def obtener_datos_excel():
     except Exception as e:
         return None, None
 
+# --- INTERFAZ WEB (Panel visible al entrar a tu URL de Render) ---
+@app.route("/", methods=["GET"])
+def home():
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Panel - Bot Pizzería 🍕</title>
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+            .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+            h1 { color: #d9534f; text-align: center; }
+            .status { text-align: center; font-weight: bold; color: #5cb85c; margin-bottom: 30px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+            th { background-color: #f8f9fa; }
+            .badge { background: #f0ad4e; color: white; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🍕 Panel de Control - Pizzería Bot</h1>
+            <div class="status">🟢 Bot de WhatsApp Activo y Operando</div>
+            
+            <h2>🛒 Carritos y Pedidos Activos en Memoria</h2>
+            {% if carritos %}
+                <table>
+                    <tr>
+                        <th>Teléfono / Cliente</th>
+                        <th>Productos en Carrito</th>
+                        <th>Estado de Pago</th>
+                    </tr>
+                    {% for tel, carrito in carritos.items() %}
+                    <tr>
+                        <td>
+                            <strong>{{ nombres.get(tel, 'Cliente Anónimo') }}</strong><br>
+                            <small style="color: gray;">{{ tel }}</small>
+                        </td>
+                        <td>
+                            {% if carrito %}
+                                <ul>
+                                {% for item in carrito %}
+                                    <li>{{ item.nombre }} — <strong>${{ item.precio }}</strong></li>
+                                {% endfor %}
+                                </ul>
+                            {% else %}
+                                <em>Carrito vacío</em>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge">{{ pagos.get(tel, 'ninguno') }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            {% else %}
+                <p style="text-align: center; color: #777;">No hay clientes activos en este momento.</p>
+            {% endif %}
+        </div>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template, carritos=carritos_clientes, pagos=pagos_clientes, nombres=nombres_clientes)
+
+# --- WEBHOOK DE WHATSAPP ---
 @app.route("/bot", methods=["POST"])
 def bot_whatsapp():
-    # Obtenemos el teléfono del cliente y el mensaje que envió
     remitente = request.values.get('From', '')
     incoming_msg = request.values.get('Body', '').strip()
     msg_lower = incoming_msg.lower()
@@ -34,7 +98,7 @@ def bot_whatsapp():
     resp = MessagingResponse()
     msg = resp.message()
 
-    # Inicializamos las estructuras del cliente si es la primera vez que escribe
+    # Inicializamos estructuras del cliente
     if remitente not in carritos_clientes:
         carritos_clientes[remitente] = []
     if remitente not in pagos_clientes:
@@ -42,7 +106,7 @@ def bot_whatsapp():
     if remitente not in pidiendo_nombre:
         pidiendo_nombre[remitente] = False
 
-    # 0. PRIORIDAD 1: Si el cliente está en medio de elegir un método de pago
+    # 0. PRIORIDAD 1: Selección de método de pago
     if pagos_clientes[remitente] == "pendiente":
         if msg_lower in ["1", "2", "3"]:
             carrito = carritos_clientes.get(remitente, [])
@@ -72,7 +136,7 @@ def bot_whatsapp():
         else:
             msg.body("⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago")
 
-    # 1. PRIORIDAD 2: Activación con el saludo "hola" o similar
+    # 1. PRIORIDAD 2: Saludo inicial
     elif any(word in msg_lower for word in ["hola", "buenas", "menu", "empezar", "comenzar", "pedir"]):
         pagos_clientes[remitente] = "ninguno"
         pidiendo_nombre[remitente] = True  
@@ -82,7 +146,7 @@ def bot_whatsapp():
         )
         msg.body(welcome_text)
 
-    # 2. PRIORIDAD 3: Si el bot estaba esperando el nombre del cliente
+    # 2. PRIORIDAD 3: Captura de nombre
     elif pidiendo_nombre.get(remitente, False):
         nombres_clientes[remitente] = incoming_msg
         pidiendo_nombre[remitente] = False  
@@ -97,7 +161,7 @@ def bot_whatsapp():
         )
         msg.body(menu_opciones)
 
-    # 3. Opción 1: Filtrar y mostrar solo Pizzas 🍕 (CORREGIDO)
+    # 3. Opción 1: Pizzas
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
@@ -121,7 +185,7 @@ def bot_whatsapp():
         else:
             msg.body("🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas.")
 
-    # 4. Opción 2: Filtrar y mostrar solo Empanadas 🥟 (CORREGIDO)
+    # 4. Opción 2: Empanadas
     elif msg_lower == "2":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
@@ -145,7 +209,7 @@ def bot_whatsapp():
         else:
             msg.body("🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas.")
 
-    # 5. Opción 3: Consultar promos o combos 🎉
+    # 5. Opción 3: Promos y Combos
     elif msg_lower == "3":
         _, df_promos = obtener_datos_excel()
         if df_promos is not None:
@@ -162,7 +226,7 @@ def bot_whatsapp():
         else:
             msg.body("🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas.")
 
-    # 6. Ver el total y el carrito actual
+    # 6. Ver total / carrito
     elif msg_lower in ["total", "carrito", "pedido"]:
         carrito = carritos_clientes[remitente]
         if not carrito:
@@ -177,13 +241,13 @@ def bot_whatsapp():
             detalle += f"\n💰 *Total a Pagar: ${total_apagar}*\n\n¿Deseás confirmar tu pedido? Escribí *'confirmar'*."
             msg.body(detalle)
 
-    # 7. Vaciar el carrito
+    # 7. Vaciar carrito
     elif msg_lower in ["vaciar", "limpiar"]:
         carritos_clientes[remitente] = []
         pagos_clientes[remitente] = "ninguno"
         msg.body("🗑️ Has vaciado tu carrito. Podés volver a armar tu pedido cuando quieras.")
 
-    # 8. Iniciar confirmación de pedido (Pide elegir forma de pago)
+    # 8. Confirmar pedido
     elif msg_lower in ["confirmar", "finalizar"]:
         carrito = carritos_clientes[remitente]
         if not carrito:
@@ -199,11 +263,10 @@ def bot_whatsapp():
             )
 
     else:
-        # Intentamos buscar si lo que escribió el cliente es un código de producto (ej: P01, E01, COMBO01)
+        # Búsqueda de códigos de productos en el Excel
         df_menu, df_promos = obtener_datos_excel()
         producto_encontrado = None
         
-        # Buscamos en el menú general
         if df_menu is not None:
             match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
@@ -212,7 +275,6 @@ def bot_whatsapp():
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
         
-        # Si no está en el menú, buscamos en promos y combos
         if not producto_encontrado and df_promos is not None:
             match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
@@ -221,7 +283,6 @@ def bot_whatsapp():
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
 
-        # Si encontramos el producto por código, lo sumamos al carrito
         if producto_encontrado:
             carritos_clientes[remitente].append(producto_encontrado)
             total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
@@ -237,7 +298,6 @@ def bot_whatsapp():
                 "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
             )
 
-    # Devuelve la respuesta obligatoria a Twilio
     return str(resp)
 
 if __name__ == "__main__":
