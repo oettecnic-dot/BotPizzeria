@@ -13,8 +13,9 @@ logging.basicConfig(
 
 app = Flask(__name__)
 
-# ID de tu Google Sheets provisto[span_1](start_span)[span_1](end_span)
-GOOGLE_SHEET_ID = "1GB6AVyHP4N63i4FrKXw6I1DR087Mm5F0xEGYnF_0_Fk"
+# ID de Google Sheets obtenido de forma segura desde las Variables de Entorno de Render
+# (Si no está definida en el servidor, usa el ID por defecto como respaldo)[span_1](start_span)[span_1](end_span)
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1GB6AVyHP4N63i4FrKXw6I1DR087Mm5F0xEGYnF_0_Fk")
 
 # Memoria temporal para los carritos, estados de pago y nombres de cada cliente/sesión
 carritos_clientes = {}
@@ -35,7 +36,6 @@ def obtener_datos_excel():
         df_promos = pd.read_csv(url_promos)
         return df_menu, df_promos
     except Exception as e:
-        # Reemplazo profesional de print() por logging.error
         logging.error(f"Error al leer Google Sheets: {e}")
         return None, None
 
