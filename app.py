@@ -5,30 +5,33 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
+# ID de tu Google Sheets provisto
+GOOGLE_SHEET_ID = "1GB6AVyHP4N63i4FrKXw6I1DR087Mm5F0xEGYnF_0_Fk"
+
 # Memoria temporal para los carritos, estados de pago y nombres de cada cliente/sesión
 carritos_clientes = {}
 pagos_clientes = {}
 nombres_clientes = {}
 pidiendo_nombre = {}
 
-# Función auxiliar para leer la planilla de manera segura (.xls o .xlsx)
+# Función auxiliar para leer los datos directamente desde Google Sheets
 def obtener_datos_excel():
-    excel_path = "Menu y Promos Comercio.xls"
-    if not os.path.exists(excel_path):
-        excel_path = "Menu y Promos Comercio.xlsx"
-    
     try:
-        df_menu = pd.read_excel(excel_path, sheet_name="Menu y Productos")
-        df_promos = pd.read_excel(excel_path, sheet_name="Promociones y Combos")
+        # Enlaces de exportación directa a CSV desde Google Sheets por nombre de pestaña
+        url_menu = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Menu y Productos"
+        url_promos = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Promociones y Combos"
+        
+        df_menu = pd.read_csv(url_menu)
+        df_promos = pd.read_csv(url_promos)
         return df_menu, df_promos
     except Exception as e:
+        print(f"Error al leer Google Sheets: {e}")
         return None, None
 
 # Función para limpiar caracteres especiales que rompen el XML de WhatsApp/Twilio
 def limpiar_texto(texto):
     if pd.isna(texto):
         return ""
-    # Reemplaza el ampersand para evitar errores de sintaxis XML en Twilio
     return str(texto).replace('&', 'y')
 
 # --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
@@ -96,7 +99,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo (Con limpieza de caracteres seguros para WhatsApp)
+    # 3. Opción 1: Menú Completo desde Google Sheets
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
@@ -127,7 +130,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             respuesta_texto = catalogo_resumen
         else:
-            respuesta_texto = "📋 *Menú Completo*\n\nEstamos actualizando la base de datos de productos."
+            respuesta_texto = "📋 *Menú Completo*\n\nNo se pudo conectar con Google Sheets en este momento."
 
     # 4. Opción 2: Consultar por código de producto
     elif msg_lower == "2":
@@ -136,7 +139,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             "Por favor, escribí el código exacto del producto que querés pedir (por ejemplo: `P01` para pizzas, `S01` para sándwiches, `B01` para bebidas) y lo sumaremos automáticamente a tu carrito."
         )
 
-    # 5. Opción 3: Promos y Combos
+    # 5. Opción 3: Promos y Combos desde Google Sheets
     elif msg_lower == "3":
         _, df_promos = obtener_datos_excel()
         if df_promos is not None:
@@ -150,7 +153,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
             respuesta_texto = promos_resumen
         else:
-            respuesta_texto = "🎉 *Promos y Combos*\n\nConsultá nuestras ofertas especiales actualizadas."
+            respuesta_texto = "🎉 *Promos y Combos*\n\nNo se pudieron cargar las promociones desde Google Sheets."
 
     # 6. Ver total / carrito
     elif msg_lower in ["total", "carrito", "pedido"]:
@@ -188,7 +191,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             )
 
     else:
-        # Búsqueda global de códigos de productos en TODO el Excel
+        # Búsqueda global de códigos en Google Sheets
         df_menu, df_promos = obtener_datos_excel()
         producto_encontrado = None
         
