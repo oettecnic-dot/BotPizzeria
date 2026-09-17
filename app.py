@@ -24,6 +24,13 @@ def obtener_datos_excel():
     except Exception as e:
         return None, None
 
+# Función para limpiar caracteres especiales que rompen el XML de WhatsApp/Twilio
+def limpiar_texto(texto):
+    if pd.isna(texto):
+        return ""
+    # Reemplaza el ampersand para evitar errores de sintaxis XML en Twilio
+    return str(texto).replace('&', 'y')
+
 # --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
 def procesar_logica_bot(remitente, incoming_msg):
     msg_lower = incoming_msg.strip().lower()
@@ -81,7 +88,7 @@ def procesar_logica_bot(remitente, incoming_msg):
         nombres_clientes[remitente] = incoming_msg
         pidiendo_nombre[remitente] = False  
         respuesta_texto = (
-            f"¡Mucho gusto, *{incoming_msg}*! 🍕👍\n\n"
+            f"¡Mucho gusto, *{limpiar_texto(incoming_msg)}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
             "1️⃣ Ver Menú Completo (Pizzas, Empanadas, Sándwiches, Bebidas y más) 📋\n"
             "2️⃣ Buscar producto por Código 🔍\n"
@@ -89,13 +96,12 @@ def procesar_logica_bot(remitente, incoming_msg):
             "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo agrupado por categorías (Muestra Pizzas, Empanadas, Sándwiches, Bebidas, Postres, etc.)
+    # 3. Opción 1: Menú Completo (Con limpieza de caracteres seguros para WhatsApp)
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             catalogo_resumen = "📋 *Menú Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
             
-            # Detectamos si existe columna de categoría en el Excel para agrupar de forma limpia
             col_categoria = None
             for col in df_menu.columns:
                 if 'categor' in col.lower():
@@ -103,20 +109,18 @@ def procesar_logica_bot(remitente, incoming_msg):
                     break
             
             if col_categoria:
-                # Agrupamos por la categoría existente en tu Excel (ej: Pizzas, Sándwiches, Bebidas, Postres)
                 for categoria, grupo in df_menu.groupby(col_categoria):
                     catalogo_resumen += f"*{str(categoria).upper()}*\n"
                     for _, row in grupo.iterrows():
-                        codigo = row.get('Codigo', row.iloc[0])
-                        nombre = row.get('Producto/ Variedad', row.iloc[1])
+                        codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
+                        nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
                         precio = row.get('Precio ($)', row.iloc[-1])
                         catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
                     catalogo_resumen += "\n"
             else:
-                # Si no hay columna de categoría estricta, listamos todo el menú completo sin excluir nada
                 for _, row in df_menu.iterrows():
-                    codigo = row.get('Codigo', row.iloc[0])
-                    nombre = row.get('Producto/ Variedad', row.iloc[1])
+                    codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
+                    nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
                     precio = row.get('Precio ($)', row.iloc[-1])
                     catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
 
@@ -138,9 +142,9 @@ def procesar_logica_bot(remitente, incoming_msg):
         if df_promos is not None:
             promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
             for _, row in df_promos.iterrows():
-                codigo = row.get('Codigo', row.iloc[0])
-                nombre = row.get('Producto/ Variedad', row.iloc[1])
-                desc = row.get('Descripción/Ingredientes', '')
+                codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
+                nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
+                desc = limpiar_texto(row.get('Descripción/Ingredientes', ''))
                 precio = row.get('Precio ($)', row.iloc[-1])
                 promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
@@ -154,7 +158,7 @@ def procesar_logica_bot(remitente, incoming_msg):
         if not carrito:
             respuesta_texto = "🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto o combo (ej: `P01`) para empezar a sumar a tu pedido."
         else:
-            detalle = "🛒 *Resumen de তোমার Pedido:*\n\n" if False else "🛒 *Resumen de tu Pedido:*\n\n"
+            detalle = "🛒 *Resumen de tu Pedido:*\n\n"
             total_apagar = 0
             for item in carrito:
                 detalle += f"• {item['nombre']} — ${item['precio']}\n"
@@ -184,7 +188,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             )
 
     else:
-        # Búsqueda global de códigos de productos en TODO el Excel (tanto menú general como promos)
+        # Búsqueda global de códigos de productos en TODO el Excel
         df_menu, df_promos = obtener_datos_excel()
         producto_encontrado = None
         
@@ -192,7 +196,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
                 producto_encontrado = {
-                    'nombre': match.iloc[0]['Producto/ Variedad'],
+                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
         
@@ -200,7 +204,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
                 producto_encontrado = {
-                    'nombre': match.iloc[0]['Producto/ Variedad'],
+                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
 
