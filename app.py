@@ -1,4 +1,5 @@
 import os
+import urllib.parse
 import pandas as pd
 from flask import Flask, request, render_template_string, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
@@ -14,12 +15,15 @@ pagos_clientes = {}
 nombres_clientes = {}
 pidiendo_nombre = {}
 
-# Función auxiliar para leer los datos directamente desde Google Sheets
+# Función auxiliar para leer los datos de Google Sheets de manera segura
 def obtener_datos_excel():
     try:
-        # Enlaces de exportación directa a CSV desde Google Sheets por nombre de pestaña
-        url_menu = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Menu y Productos"
-        url_promos = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Promociones y Combos"
+        # Codificamos los nombres de las pestañas para que los espacios no rompan la URL
+        sheet_menu = urllib.parse.quote("Menu y Productos")
+        sheet_promos = urllib.parse.quote("Promociones y Combos")
+        
+        url_menu = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_menu}"
+        url_promos = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_promos}"
         
         df_menu = pd.read_csv(url_menu)
         df_promos = pd.read_csv(url_promos)
@@ -38,7 +42,6 @@ def limpiar_texto(texto):
 def procesar_logica_bot(remitente, incoming_msg):
     msg_lower = incoming_msg.strip().lower()
 
-    # Inicializar estructuras si es la primera vez
     if remitente not in carritos_clientes:
         carritos_clientes[remitente] = []
     if remitente not in pagos_clientes:
@@ -336,4 +339,4 @@ def bot_whatsapp():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False) 
+    app.run(host="0.0.0.0", port=port, debug=False)
