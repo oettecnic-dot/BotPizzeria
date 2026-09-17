@@ -83,55 +83,54 @@ def procesar_logica_bot(remitente, incoming_msg):
         respuesta_texto = (
             f"¡Mucho gusto, *{incoming_msg}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
-            "1️⃣ Pizzas 🍕\n"
-            "2️⃣ Empanadas 🥟\n"
+            "1️⃣ Ver Menú Completo (Pizzas, Empanadas, Sándwiches, Bebidas y más) 📋\n"
+            "2️⃣ Buscar producto por Código 🔍\n"
             "3️⃣ Promos y Combos 🎉\n\n"
-            "💡 También podés escribir directamente el código de un producto o combo (ej: P14 o COMBO01) para ver sus detalles."
+            "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Pizzas
+    # 3. Opción 1: Menú Completo agrupado por categorías (Muestra Pizzas, Empanadas, Sándwiches, Bebidas, Postres, etc.)
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
-            try:
-                pizzas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('pizza', case=False).any(), axis=1)]
-            except Exception:
-                pizzas = df_menu
-            if pizzas.empty:
-                pizzas = df_menu
-                
-            catalogo_resumen = "🍕 *Catálogo de Pizzas* 🍕\n\n"
-            for _, row in pizzas.iterrows():
-                codigo = row.get('Codigo', row.iloc[0])
-                nombre = row.get('Producto/ Variedad', row.iloc[1])
-                precio = row.get('Precio ($)', row.iloc[-1])
-                catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
-            catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
-            respuesta_texto = catalogo_resumen
-        else:
-            respuesta_texto = "🍕 *Pizzas*\n\nEstamos actualizando el catálogo de pizzas."
+            catalogo_resumen = "📋 *Menú Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
+            
+            # Detectamos si existe columna de categoría en el Excel para agrupar de forma limpia
+            col_categoria = None
+            for col in df_menu.columns:
+                if 'categor' in col.lower():
+                    col_categoria = col
+                    break
+            
+            if col_categoria:
+                # Agrupamos por la categoría existente en tu Excel (ej: Pizzas, Sándwiches, Bebidas, Postres)
+                for categoria, grupo in df_menu.groupby(col_categoria):
+                    catalogo_resumen += f"*{str(categoria).upper()}*\n"
+                    for _, row in grupo.iterrows():
+                        codigo = row.get('Codigo', row.iloc[0])
+                        nombre = row.get('Producto/ Variedad', row.iloc[1])
+                        precio = row.get('Precio ($)', row.iloc[-1])
+                        catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                    catalogo_resumen += "\n"
+            else:
+                # Si no hay columna de categoría estricta, listamos todo el menú completo sin excluir nada
+                for _, row in df_menu.iterrows():
+                    codigo = row.get('Codigo', row.iloc[0])
+                    nombre = row.get('Producto/ Variedad', row.iloc[1])
+                    precio = row.get('Precio ($)', row.iloc[-1])
+                    catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
 
-    # 4. Opción 2: Empanadas
-    elif msg_lower == "2":
-        df_menu, _ = obtener_datos_excel()
-        if df_menu is not None:
-            try:
-                empanadas = df_menu[df_menu.astype(str).apply(lambda row: row.str.contains('empanada', case=False).any(), axis=1)]
-            except Exception:
-                empanadas = df_menu
-            if empanadas.empty:
-                empanadas = df_menu
-                
-            catalogo_resumen = "🥟 *Catálogo de Empanadas* 🥟\n\n"
-            for _, row in empanadas.iterrows():
-                codigo = row.get('Codigo', row.iloc[0])
-                nombre = row.get('Producto/ Variedad', row.iloc[1])
-                precio = row.get('Precio ($)', row.iloc[-1])
-                catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             respuesta_texto = catalogo_resumen
         else:
-            respuesta_texto = "🥟 *Empanadas*\n\nEstamos actualizando el catálogo de empanadas."
+            respuesta_texto = "📋 *Menú Completo*\n\nEstamos actualizando la base de datos de productos."
+
+    # 4. Opción 2: Consultar por código de producto
+    elif msg_lower == "2":
+        respuesta_texto = (
+            "🔍 *Consulta por Producto por Código*\n\n"
+            "Por favor, escribí el código exacto del producto que querés pedir (por ejemplo: `P01` para pizzas, `S01` para sándwiches, `B01` para bebidas) y lo sumaremos automáticamente a tu carrito."
+        )
 
     # 5. Opción 3: Promos y Combos
     elif msg_lower == "3":
@@ -155,7 +154,7 @@ def procesar_logica_bot(remitente, incoming_msg):
         if not carrito:
             respuesta_texto = "🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto o combo (ej: `P01`) para empezar a sumar a tu pedido."
         else:
-            detalle = "🛒 *Resumen de tu Pedido:*\n\n"
+            detalle = "🛒 *Resumen de তোমার Pedido:*\n\n" if False else "🛒 *Resumen de tu Pedido:*\n\n"
             total_apagar = 0
             for item in carrito:
                 detalle += f"• {item['nombre']} — ${item['precio']}\n"
@@ -185,7 +184,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             )
 
     else:
-        # Búsqueda de códigos de productos en el Excel
+        # Búsqueda global de códigos de productos en TODO el Excel (tanto menú general como promos)
         df_menu, df_promos = obtener_datos_excel()
         producto_encontrado = None
         
@@ -217,7 +216,7 @@ def procesar_logica_bot(remitente, incoming_msg):
         else:
             respuesta_texto = (
                 f"Recibimos tu mensaje: \"{incoming_msg}\".\n"
-                "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto (ej: `P01`) para sumarlo a tu pedido."
+                "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto para sumarlo a tu pedido."
             )
 
     return respuesta_texto
@@ -259,10 +258,9 @@ def home():
         </div>
 
         <script>
-            // Generar un ID de sesión único para este navegador web
             let sessionId = localStorage.getItem("web_session_id");
             if (!sessionId) {
-                sessionId = "web_" + Math.random().toString(36.25).substring(2, 9);
+                sessionId = "web_" + Math.random().toString(36).substring(2, 9);
                 localStorage.setItem("web_session_id", sessionId);
             }
 
@@ -307,16 +305,14 @@ def home():
     """
     return render_template_string(html_template)
 
-# --- API PARA RECIBIR MENSAJES DESDE LA WEB ---
+# --- API PARA CHAT WEB ---
 @app.route("/chat-api", methods=["POST"])
 def chat_api():
     data = request.get_json()
     incoming_msg = data.get("message", "")
     session_id = data.get("session_id", "web_default")
     
-    # Llamamos a la misma lógica compartida del bot
     respuesta = procesar_logica_bot(session_id, incoming_msg)
-    
     return jsonify({"reply": respuesta})
 
 # --- WEBHOOK DE WHATSAPP ---
@@ -326,8 +322,6 @@ def bot_whatsapp():
     incoming_msg = request.values.get('Body', '').strip()
     
     resp = MessagingResponse()
-    
-    # Llamamos a la misma lógica compartida del bot
     respuesta = procesar_logica_bot(remitente, incoming_msg)
     
     resp.message(respuesta)
