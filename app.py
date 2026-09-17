@@ -1,6 +1,8 @@
 import os
 import urllib.parse
 import logging
+import time
+from functools import wraps
 import pandas as pd
 from flask import Flask, request, render_template_string, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
@@ -14,7 +16,7 @@ logging.basicConfig(
 app = Flask(__name__)
 
 # ID de Google Sheets obtenido de forma segura desde las Variables de Entorno de Render
-# (Si no está definida en el servidor, usa el ID por defecto como respaldo)[span_1](start_span)[span_1](end_span)
+# (Si no está definida en el servidor, usa el ID por defecto como respaldo)[span_0](start_span)[span_0](end_span)
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1GB6AVyHP4N63i4FrKXw6I1DR087Mm5F0xEGYnF_0_Fk")
 
 # Memoria temporal para los carritos, estados de pago y nombres de cada cliente/sesión
@@ -23,7 +25,29 @@ pagos_clientes = {}
 nombres_clientes = {}
 pidiendo_nombre = {}
 
-# Función auxiliar para leer los datos de Google Sheets de manera segura
+# --- DECORADOR DE CACHÉ TTL (Expira cada 5 minutos / 300 segundos) ---
+def ttl_cache(ttl_seconds=300):
+    def decorator(func):
+        cache = {}
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            key = str(args) + str(kwargs)
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < ttl_seconds:
+                    logging.info("⚡ Usando datos en caché de Google Sheets (sin llamadas externas).")
+                    return result
+            
+            logging.info("🔄 Descargando datos frescos desde Google Sheets...")
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+            return result
+        return wrapper
+    return decorator
+
+# Función auxiliar para leer los datos de Google Sheets con Caché integrada
+@ttl_cache(ttl_seconds=300)
 def obtener_datos_excel():
     try:
         sheet_menu = urllib.parse.quote("Menu y Productos")
