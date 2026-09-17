@@ -1,12 +1,19 @@
 import os
 import urllib.parse
+import logging
 import pandas as pd
 from flask import Flask, request, render_template_string, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
 
+# Configuración profesional de Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
+
 app = Flask(__name__)
 
-# ID de tu Google Sheets provisto
+# ID de tu Google Sheets provisto[span_1](start_span)[span_1](end_span)
 GOOGLE_SHEET_ID = "1GB6AVyHP4N63i4FrKXw6I1DR087Mm5F0xEGYnF_0_Fk"
 
 # Memoria temporal para los carritos, estados de pago y nombres de cada cliente/sesión
@@ -18,7 +25,6 @@ pidiendo_nombre = {}
 # Función auxiliar para leer los datos de Google Sheets de manera segura
 def obtener_datos_excel():
     try:
-        # Codificamos los nombres de las pestañas para que los espacios no rompan la URL
         sheet_menu = urllib.parse.quote("Menu y Productos")
         sheet_promos = urllib.parse.quote("Promociones y Combos")
         
@@ -29,7 +35,8 @@ def obtener_datos_excel():
         df_promos = pd.read_csv(url_promos)
         return df_menu, df_promos
     except Exception as e:
-        print(f"Error al leer Google Sheets: {e}")
+        # Reemplazo profesional de print() por logging.error
+        logging.error(f"Error al leer Google Sheets: {e}")
         return None, None
 
 # Función para limpiar caracteres especiales que rompen el XML de WhatsApp/Twilio
@@ -41,6 +48,7 @@ def limpiar_texto(texto):
 # --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
 def procesar_logica_bot(remitente, incoming_msg):
     msg_lower = incoming_msg.strip().lower()
+    logging.info(f"Mensaje recibido de [{remitente}]: {incoming_msg}")
 
     if remitente not in carritos_clientes:
         carritos_clientes[remitente] = []
@@ -77,6 +85,7 @@ def procesar_logica_bot(remitente, incoming_msg):
             )
             carritos_clientes[remitente] = []
             pagos_clientes[remitente] = "finalizado"
+            logging.info(f"Pedido finalizado con éxito para {nombre_cliente} ({remitente}). Total: ${total_apagar}")
         else:
             respuesta_texto = "⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago"
 
@@ -223,6 +232,7 @@ def procesar_logica_bot(remitente, incoming_msg):
                 f"🛒 Subtotal parcial: *${total_parcial}*\n"
                 f"*(Escribí 'total' para ver tu carrito o seguí agregando más productos).* "
             )
+            logging.info(f"Producto agregado al carrito de {remitente}: {producto_encontrado['nombre']}")
         else:
             respuesta_texto = (
                 f"Recibimos tu mensaje: \"{incoming_msg}\".\n"
@@ -339,4 +349,4 @@ def bot_whatsapp():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False) 
