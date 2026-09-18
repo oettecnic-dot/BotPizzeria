@@ -6,6 +6,8 @@ from functools import wraps
 import pandas as pd
 from flask import Flask, request, render_template_string, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
+import gspread
+from google.oauth2.service_account import Credentials
 
 # Configuración profesional de Logging
 logging.basicConfig(
@@ -68,6 +70,39 @@ def limpiar_texto(texto):
         return ""
     return str(texto).replace('&', 'y')
 
+# --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS ---
+def actualizar_stock_google_sheets(carrito):
+    try:
+        SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+        client = gspread.authorize(creds)
+        
+        sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Menu y Productos")
+        registros = sheet.get_all_records()
+        header_row = sheet.row_values(1)
+        col_idx = header_row.index('Stock') + 1 
+        
+        # Contamos la cantidad total pedida por cada código en este carrito
+        conteo_items = {}
+        for item in carrito:
+            codigo = str(item['codigo']).strip().lower()
+            conteo_items[codigo] = conteo_items.get(codigo, 0) + 1
+        
+        # Descontamos en la planilla por cada producto agrupado
+        for codigo_buscado, cantidad_pedida in conteo_items.items():
+            for idx, row in enumerate(registros, start=2):
+                codigo_fila = str(row.get('Codigo', '')).strip().lower()
+                
+                if codigo_fila == codigo_buscado:
+                    stock_actual = int(row.get('Stock', 0))
+                    nuevo_stock = max(0, stock_actual - cantidad_pedida)
+                    
+                    sheet.update_cell(idx, col_idx, nuevo_stock)
+                    logging.info(f"Stock actualizado para {codigo_buscado}: {stock_actual} -> {nuevo_stock} (Se restaron {cantidad_pedida})")
+                    break
+    except Exception as e:
+        logging.error(f"Error al actualizar el stock en Google Sheets: {e}")
+
 # --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
 def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
     msg_lower = incoming_msg.strip().lower()
@@ -80,7 +115,6 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
     if remitente not in pidiendo_nombre:
         pidiendo_nombre[remitente] = False
 
-    # Si WhatsApp manda el nombre de perfil y todavía no lo tenemos guardado, lo precargamos
     if profile_name and remitente not in nombres_clientes:
         nombres_clientes[remitente] = profile_name
 
@@ -91,8 +125,6 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         if msg_lower in ["1", "2", "3"]:
             carrito = carritos_clientes.get(remitente, [])
             total_apagar = sum(item['precio'] for item in carrito)
-            
-            # Corrección: Aseguramos la búsqueda correcta del nombre del cliente
             nombre_cliente = nombres_clientes.get(remitente) or profile_name or "Cliente"
             
             if msg_lower == "1":
@@ -104,6 +136,9 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             else:
                 metodo = "Mercado Pago"
                 instrucciones = "Podés abonar con dinero en cuenta al momento de recibir o solicitar link de pago."
+
+            # Actualizamos el stock en Google Sheets antes de vaciar el carrito
+            actualizar_stock_google_sheets(carrito)
 
             respuesta_texto = (
                 f"✅ ¡Pedido confirmado con éxito, {nombre_cliente}!\n\n"
@@ -253,7 +288,12 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
                 }
 
         if producto_encontrado:
-            carritos_clientes[remitente].append(producto_encontrado)
+            # Guardamos el código junto con el nombre y precio
+            carritos_clientes[remitente].append({
+                'codigo': incoming_msg.lower(),
+                'nombre': producto_encontrado['nombre'],
+                'precio': producto_encontrado['precio']
+            })
             total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
             respuesta_texto = (
                 f"✅ ¡Agregado a tu pedido!\n"
