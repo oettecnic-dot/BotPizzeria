@@ -70,27 +70,42 @@ def limpiar_texto(texto):
         return ""
     return str(texto).replace('&', 'y')
 
+# --- AUTORIZACIÓN ALTERNATIVA DE GSPREAD (Sin archivos físicos) ---
+def obtener_cliente_gspread():
+    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+    
+    client_email = os.environ.get("GOOGLE_CLIENT_EMAIL")
+    private_key = os.environ.get("GOOGLE_PRIVATE_KEY")
+    
+    if client_email and private_key:
+        private_key = private_key.replace('\\n', '\n')
+        creds_info = {
+            "type": "service_account",
+            "client_email": client_email,
+            "private_key": private_key,
+        }
+        creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+    else:
+        # Respaldo local por si pruebas con archivo físico en tu PC
+        creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+        
+    return gspread.authorize(creds)
+
 # --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS (Estructura A-F) ---
 def actualizar_stock_google_sheets(carrito):
     try:
-        SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-        client = gspread.authorize(creds)
-        
+        client = obtener_cliente_gspread()
         sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Menu y Productos")
         registros = sheet.get_all_records()
         header_row = sheet.row_values(1)
         
-        # Buscamos en qué columna exacta está 'Stock' (Columna C)
         col_idx = header_row.index('Stock') + 1 
         
-        # Contamos la cantidad total pedida por cada código en este carrito
         conteo_items = {}
         for item in carrito:
             codigo = str(item['codigo']).strip().lower()
             conteo_items[codigo] = conteo_items.get(codigo, 0) + 1
         
-        # Descontamos en la planilla por cada producto agrupado
         for codigo_buscado, cantidad_pedida in conteo_items.items():
             for idx, row in enumerate(registros, start=2):
                 codigo_fila = str(row.get('Codigo', '')).strip().lower()
@@ -177,7 +192,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo desde Google Sheets (Soportando columnas Producto, Variedad, Ingredientes)
+    # 3. Opción 1: Menú Completo desde Google Sheets
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
@@ -313,7 +328,6 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
                 }
 
         if producto_encontrado:
-            # Guardamos el código junto con el nombre y precio
             carritos_clientes[remitente].append({
                 'codigo': incoming_msg.lower(),
                 'nombre': producto_encontrado['nombre'],
