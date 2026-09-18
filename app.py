@@ -70,7 +70,7 @@ def limpiar_texto(texto):
         return ""
     return str(texto).replace('&', 'y')
 
-# --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS ---
+# --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS (Estructura A-F) ---
 def actualizar_stock_google_sheets(carrito):
     try:
         SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -80,6 +80,8 @@ def actualizar_stock_google_sheets(carrito):
         sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Menu y Productos")
         registros = sheet.get_all_records()
         header_row = sheet.row_values(1)
+        
+        # Buscamos en qué columna exacta está 'Stock' (Columna C)
         col_idx = header_row.index('Stock') + 1 
         
         # Contamos la cantidad total pedida por cada código en este carrito
@@ -175,11 +177,12 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo desde Google Sheets
+    # 3. Opción 1: Menú Completo desde Google Sheets (Soportando columnas Producto, Variedad, Ingredientes)
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             catalogo_resumen = "📋 *Menú Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
+            df_menu.columns = df_menu.columns.str.strip()
             
             col_categoria = None
             for col in df_menu.columns:
@@ -192,16 +195,32 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
                     catalogo_resumen += f"*{str(categoria).upper()}*\n"
                     for _, row in grupo.iterrows():
                         codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                        nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
+                        producto = limpiar_texto(row.get('Producto', ''))
+                        variedad = limpiar_texto(row.get('Variedad', ''))
+                        ingredientes = limpiar_texto(row.get('Ingredientes', ''))
                         precio = row.get('Precio ($)', row.iloc[-1])
-                        catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                        
+                        nombre_completo = f"{producto} {variedad}".strip()
+                        
+                        catalogo_resumen += f"• *{codigo}* - *{nombre_completo}*\n"
+                        if ingredientes:
+                            catalogo_resumen += f"  _{ingredientes}_\n"
+                        catalogo_resumen += f"  Precio: *${precio}*\n\n"
                     catalogo_resumen += "\n"
             else:
                 for _, row in df_menu.iterrows():
                     codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                    nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
+                    producto = limpiar_texto(row.get('Producto', ''))
+                    variedad = limpiar_texto(row.get('Variedad', ''))
+                    ingredientes = limpiar_texto(row.get('Ingredientes', ''))
                     precio = row.get('Precio ($)', row.iloc[-1])
-                    catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                    
+                    nombre_completo = f"{producto} {variedad}".strip()
+                    
+                    catalogo_resumen += f"• *{codigo}* - *{nombre_completo}*\n"
+                    if ingredientes:
+                        catalogo_resumen += f"  _{ingredientes}_\n"
+                    catalogo_resumen += f"  Precio: *${precio}*\n\n"
 
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             respuesta_texto = catalogo_resumen
@@ -222,8 +241,8 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
             for _, row in df_promos.iterrows():
                 codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
-                desc = limpiar_texto(row.get('Descripción/Ingredientes', ''))
+                nombre = limpiar_texto(row.get('Producto/ Variedad', row.get('Producto', row.iloc[1])))
+                desc = limpiar_texto(row.get('Descripción/Ingredientes', row.get('Ingredientes', '')))
                 precio = row.get('Precio ($)', row.iloc[-1])
                 promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
@@ -272,18 +291,24 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         producto_encontrado = None
         
         if df_menu is not None:
+            df_menu.columns = df_menu.columns.str.strip()
             match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
+                prod = limpiar_texto(match.iloc[0].get('Producto', ''))
+                var = limpiar_texto(match.iloc[0].get('Variedad', ''))
+                nombre_completo = f"{prod} {var}".strip() or "Producto"
                 producto_encontrado = {
-                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
+                    'nombre': nombre_completo,
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
         
         if not producto_encontrado and df_promos is not None:
+            df_promos.columns = df_promos.columns.str.strip()
             match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
+                nombre_promo = limpiar_texto(match.iloc[0].get('Producto/ Variedad', match.iloc[0].get('Producto', 'Promo')))
                 producto_encontrado = {
-                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
+                    'nombre': nombre_promo,
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
 
