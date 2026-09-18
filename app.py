@@ -16,7 +16,6 @@ logging.basicConfig(
 app = Flask(__name__)
 
 # ID de Google Sheets obtenido de forma segura desde las Variables de Entorno de Render
-# (Si no está definida en el servidor, usa el ID por defecto como respaldo)[span_0](start_span)[span_0](end_span)
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1GB6AVyHP4N63i4FrKXw6I1DR087Mm5F0xEGYnF_0_Fk")
 
 # Memoria temporal para los carritos, estados de pago y nombres de cada cliente/sesión
@@ -70,9 +69,9 @@ def limpiar_texto(texto):
     return str(texto).replace('&', 'y')
 
 # --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
-def procesar_logica_bot(remitente, incoming_msg):
+def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
     msg_lower = incoming_msg.strip().lower()
-    logging.info(f"Mensaje recibido de [{remitente}]: {incoming_msg}")
+    logging.info(f"Mensaje recibido de [{remitente}] ({profile_name}): {incoming_msg}")
 
     if remitente not in carritos_clientes:
         carritos_clientes[remitente] = []
@@ -81,6 +80,10 @@ def procesar_logica_bot(remitente, incoming_msg):
     if remitente not in pidiendo_nombre:
         pidiendo_nombre[remitente] = False
 
+    # Si WhatsApp manda el nombre de perfil y todavía no lo tenemos guardado, lo precargamos
+    if profile_name and remitente not in nombres_clientes:
+        nombres_clientes[remitente] = profile_name
+
     respuesta_texto = ""
 
     # 0. PRIORIDAD 1: Selección de método de pago
@@ -88,7 +91,9 @@ def procesar_logica_bot(remitente, incoming_msg):
         if msg_lower in ["1", "2", "3"]:
             carrito = carritos_clientes.get(remitente, [])
             total_apagar = sum(item['precio'] for item in carrito)
-            nombre_cliente = nombres_clientes.get(remitente, "Cliente")
+            
+            # Corrección: Aseguramos la búsqueda correcta del nombre del cliente
+            nombre_cliente = nombres_clientes.get(remitente) or profile_name or "Cliente"
             
             if msg_lower == "1":
                 metodo = "Efectivo (contra entrega)"
@@ -124,7 +129,7 @@ def procesar_logica_bot(remitente, incoming_msg):
 
     # 2. PRIORIDAD 3: Captura de nombre
     elif pidiendo_nombre.get(remitente, False):
-        nombres_clientes[remitente] = incoming_msg
+        nombres_clientes[remitente] = incoming_msg.strip()
         pidiendo_nombre[remitente] = False  
         respuesta_texto = (
             f"¡Mucho gusto, *{limpiar_texto(incoming_msg)}*! 🍕👍\n\n"
@@ -364,9 +369,10 @@ def chat_api():
 def bot_whatsapp():
     remitente = request.values.get('From', '')
     incoming_msg = request.values.get('Body', '').strip()
+    profile_name = request.values.get('ProfileName', 'Cliente')
     
     resp = MessagingResponse()
-    respuesta = procesar_logica_bot(remitente, incoming_msg)
+    respuesta = procesar_logica_bot(remitente, incoming_msg, profile_name)
     
     resp.message(respuesta)
     return str(resp)
