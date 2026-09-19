@@ -4,10 +4,10 @@ import logging
 import time
 from functools import wraps
 import pandas as pd
-from flask import Flask, request, render_template_string, jsonify
-from twilio.twiml.messaging_response import MessagingResponse
 import gspread
 from google.oauth2.service_account import Credentials
+from flask import Flask, request, render_template_string, jsonify
+from twilio.twiml.messaging_response import MessagingResponse
 
 # Configuración profesional de Logging
 logging.basicConfig(
@@ -25,6 +25,71 @@ carritos_clientes = {}
 pagos_clientes = {}
 nombres_clientes = {}
 pidiendo_nombre = {}
+
+# --- CONFIGURACIÓN DE GSPREAD PARA ESCRITURA EN GOOGLE SHEETS ---
+def obtener_cliente_gspread():
+    """Conecta con Google Sheets usando credenciales de entorno o archivo local JSON."""
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    # Si tienes las credenciales en un archivo local 'credenciales.json':
+    if os.path.exists("credenciales.json"):
+        creds = Credentials.from_service_account_file("credenciales.json", scopes=scopes)
+        return gspread.authorize(creds)
+    
+    # Opcional: Si configuras las credenciales directamente en las variables de entorno de Render
+    # (puedes adaptar esto si prefieres usar gspread.service_account())
+    return gspread.service_account(filename="credenciales.json")
+
+# --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS ---
+def actualizar_stock_google_sheets(carrito):
+    """Recorre el carrito confirmado y descuenta las unidades en la pestaña 'Menu y Productos'."""
+    try:
+        gc = obtener_cliente_gspread()
+        sh = gc.open_by_url(f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}")
+        worksheet = sh.worksheet("Menu y Productos")
+        
+        # Traemos todos los registros para buscar filas y columnas dinámicamente
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        
+        for item in carrito:
+            codigo_item = str(item['codigo']).strip().lower()
+            cantidad_comprada = int(item.get('cantidad', 1))
+            
+            # Buscamos la fila que coincida con el código del producto
+            for index, row in df.iterrows():
+                # Asumimos que la columna del código se llama 'Codigo' o similar
+                col_codigo_val = str(row.get('Codigo', row.iloc[0])).strip().lower()
+                
+                if col_codigo_val == codigo_item:
+                    # Las filas en gspread (para update_cell) comienzan en 2 (la fila 1 es el encabezado)
+                    fila_excel = index + 2 
+                    
+                    # Buscamos la columna de Stock (ej. 'Stock' o 'Cantidad')
+                    # Intentamos ubicar el nombre de la columna de stock
+                    col_stock_name = None
+                    for col in df.columns:
+                        if 'stock' in col.lower() or 'cantidad' in col.lower() or 'disponible' in col.lower():
+                            col_stock_name = col
+                            break
+                    
+                    if col_stock_name:
+                        col_idx = df.columns.get_loc(col_stock_name) + 1
+                        stock_actual = int(row[col_stock_name])
+                        nuevo_stock = max(0, stock_actual - cantidad_comprada)
+                        
+                        # Actualizamos la celda en Google Sheets
+                        worksheet.update_cell(fila_excel, col_idx, nuevo_stock)
+                        logging.info(f"Stock actualizado: Producto {codigo_item} pasó de {stock_actual} a {nuevo_stock}.")
+                    break
+        
+        # Limpiamos la caché para que la próxima lectura traiga el stock actualizado
+        obtener_datos_excel.cache_clear() if hasattr(obtener_datos_excel, 'cache_clear') else None
+        
+    except Exception as e:
+        logging.error(f"Error al descontar stock en Google Sheets: {e}")
 
 # --- DECORADOR DE CACHÉ TTL (Expira cada 5 minutos / 300 segundos) ---
 def ttl_cache(ttl_seconds=300):
@@ -70,56 +135,6 @@ def limpiar_texto(texto):
         return ""
     return str(texto).replace('&', 'y')
 
-# --- AUTORIZACIÓN ALTERNATIVA DE GSPREAD (Sin archivos físicos) ---
-def obtener_cliente_gspread():
-    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-    
-    client_email = os.environ.get("GOOGLE_CLIENT_EMAIL")
-    private_key = os.environ.get("GOOGLE_PRIVATE_KEY")
-    
-    if client_email and private_key:
-        private_key = private_key.replace('\\n', '\n')
-        creds_info = {
-            "type": "service_account",
-            "client_email": client_email,
-            "private_key": private_key,
-        }
-        creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-    else:
-        # Respaldo local por si pruebas con archivo físico en tu PC
-        creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-        
-    return gspread.authorize(creds)
-
-# --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS (Estructura A-F) ---
-def actualizar_stock_google_sheets(carrito):
-    try:
-        client = obtener_cliente_gspread()
-        sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Menu y Productos")
-        registros = sheet.get_all_records()
-        header_row = sheet.row_values(1)
-        
-        col_idx = header_row.index('Stock') + 1 
-        
-        conteo_items = {}
-        for item in carrito:
-            codigo = str(item['codigo']).strip().lower()
-            conteo_items[codigo] = conteo_items.get(codigo, 0) + 1
-        
-        for codigo_buscado, cantidad_pedida in conteo_items.items():
-            for idx, row in enumerate(registros, start=2):
-                codigo_fila = str(row.get('Codigo', '')).strip().lower()
-                
-                if codigo_fila == codigo_buscado:
-                    stock_actual = int(row.get('Stock', 0))
-                    nuevo_stock = max(0, stock_actual - cantidad_pedida)
-                    
-                    sheet.update_cell(idx, col_idx, nuevo_stock)
-                    logging.info(f"Stock actualizado para {codigo_buscado}: {stock_actual} -> {nuevo_stock} (Se restaron {cantidad_pedida})")
-                    break
-    except Exception as e:
-        logging.error(f"Error al actualizar el stock en Google Sheets: {e}")
-
 # --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
 def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
     msg_lower = incoming_msg.strip().lower()
@@ -154,7 +169,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
                 metodo = "Mercado Pago"
                 instrucciones = "Podés abonar con dinero en cuenta al momento de recibir o solicitar link de pago."
 
-            # Actualizamos el stock en Google Sheets antes de vaciar el carrito
+            # 🚀 AQUÍ DESCONTAMOS EL STOCK EN GOOGLE SHEETS AUTOMÁTICAMENTE
             actualizar_stock_google_sheets(carrito)
 
             respuesta_texto = (
@@ -166,7 +181,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             )
             carritos_clientes[remitente] = []
             pagos_clientes[remitente] = "finalizado"
-            logging.info(f"Pedido finalizado con éxito para {nombre_cliente} ({remitente}). Total: ${total_apagar}")
+            logging.info(f"Pedido finalizado y stock descontado para {nombre_cliente} ({remitente}). Total: ${total_apagar}")
         else:
             respuesta_texto = "⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago"
 
@@ -197,7 +212,6 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             catalogo_resumen = "📋 *Menú Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
-            df_menu.columns = df_menu.columns.str.strip()
             
             col_categoria = None
             for col in df_menu.columns:
@@ -210,32 +224,16 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
                     catalogo_resumen += f"*{str(categoria).upper()}*\n"
                     for _, row in grupo.iterrows():
                         codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                        producto = limpiar_texto(row.get('Producto', ''))
-                        variedad = limpiar_texto(row.get('Variedad', ''))
-                        ingredientes = limpiar_texto(row.get('Ingredientes', ''))
+                        nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
                         precio = row.get('Precio ($)', row.iloc[-1])
-                        
-                        nombre_completo = f"{producto} {variedad}".strip()
-                        
-                        catalogo_resumen += f"• *{codigo}* - *{nombre_completo}*\n"
-                        if ingredientes:
-                            catalogo_resumen += f"  _{ingredientes}_\n"
-                        catalogo_resumen += f"  Precio: *${precio}*\n\n"
+                        catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
                     catalogo_resumen += "\n"
             else:
                 for _, row in df_menu.iterrows():
                     codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                    producto = limpiar_texto(row.get('Producto', ''))
-                    variedad = limpiar_texto(row.get('Variedad', ''))
-                    ingredientes = limpiar_texto(row.get('Ingredientes', ''))
+                    nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
                     precio = row.get('Precio ($)', row.iloc[-1])
-                    
-                    nombre_completo = f"{producto} {variedad}".strip()
-                    
-                    catalogo_resumen += f"• *{codigo}* - *{nombre_completo}*\n"
-                    if ingredientes:
-                        catalogo_resumen += f"  _{ingredientes}_\n"
-                    catalogo_resumen += f"  Precio: *${precio}*\n\n"
+                    catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
 
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             respuesta_texto = catalogo_resumen
@@ -256,8 +254,8 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
             for _, row in df_promos.iterrows():
                 codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                nombre = limpiar_texto(row.get('Producto/ Variedad', row.get('Producto', row.iloc[1])))
-                desc = limpiar_texto(row.get('Descripción/Ingredientes', row.get('Ingredientes', '')))
+                nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
+                desc = limpiar_texto(row.get('Descripción/Ingredientes', ''))
                 precio = row.get('Precio ($)', row.iloc[-1])
                 promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
@@ -301,38 +299,32 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             )
 
     else:
-        # Búsqueda global de códigos en Google Sheets
+        # Búsqueda global de códigos en Google Sheets (tanto en Menú como en Promos)
         df_menu, df_promos = obtener_datos_excel()
         producto_encontrado = None
         
         if df_menu is not None:
-            df_menu.columns = df_menu.columns.str.strip()
             match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
-                prod = limpiar_texto(match.iloc[0].get('Producto', ''))
-                var = limpiar_texto(match.iloc[0].get('Variedad', ''))
-                nombre_completo = f"{prod} {var}".strip() or "Producto"
                 producto_encontrado = {
-                    'nombre': nombre_completo,
-                    'precio': float(match.iloc[0]['Precio ($)'])
+                    'codigo': incoming_msg.lower(),
+                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
+                    'precio': float(match.iloc[0]['Precio ($)']),
+                    'cantidad': 1
                 }
         
         if not producto_encontrado and df_promos is not None:
-            df_promos.columns = df_promos.columns.str.strip()
             match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
-                nombre_promo = limpiar_texto(match.iloc[0].get('Producto/ Variedad', match.iloc[0].get('Producto', 'Promo')))
                 producto_encontrado = {
-                    'nombre': nombre_promo,
-                    'precio': float(match.iloc[0]['Precio ($)'])
+                    'codigo': incoming_msg.lower(),
+                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
+                    'precio': float(match.iloc[0]['Precio ($)']),
+                    'cantidad': 1
                 }
 
         if producto_encontrado:
-            carritos_clientes[remitente].append({
-                'codigo': incoming_msg.lower(),
-                'nombre': producto_encontrado['nombre'],
-                'precio': producto_encontrado['precio']
-            })
+            carritos_clientes[remitente].append(producto_encontrado)
             total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
             respuesta_texto = (
                 f"✅ ¡Agregado a tu pedido!\n"
@@ -451,7 +443,7 @@ def bot_whatsapp():
     profile_name = request.values.get('ProfileName', 'Cliente')
     
     resp = MessagingResponse()
-    respuesta = procesar_logica_bot(remitente, incoming_msg, profile_name)
+    respuesta = procesar_logica_bot(remitente, incoming_msg, profile_name, profile_name)
     
     resp.message(respuesta)
     return str(resp)
