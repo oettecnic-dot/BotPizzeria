@@ -25,19 +25,34 @@ pagos_clientes = {}
 nombres_clientes = {}
 pidiendo_nombre = {}
 
-# --- FUNCIÓN CORREGIDA PARA DESCONTAR STOCK EN GOOGLE SHEETS ---
+# --- FUNCIÓN NUEVA PARA DESCONTAR STOCK USANDO GOOGLE APPS SCRIPT ---
 def actualizar_stock_google_sheets(carrito):
-    """Busca cada producto del carrito por su Código y descuenta el stock en la Columna C ('Stock')."""
-    try:
-        # Autenticación con gspread usando credenciales locales o configuradas
-        gc = gspread.service_account(filename="credenciales.json")
-        sh = gc.open_by_key(GOOGLE_SHEET_ID)
+    url_script = os.environ.get("GOOGLE_SCRIPT_URL")
+    if not url_script:
+        print("❌ Error: GOOGLE_SCRIPT_URL no está configurada en Render")
+        return False
+    
+    for item in carrito:
+        codigo = item.get('codigo')
+        cantidad = item.get('cantidad', 1)
         
-        pestañas = ["Menu y Productos", "Promociones y Combos"]
+        payload = {
+            "codigo": str(codigo),
+            "cantidad": int(cantidad)
+        }
         
-        for item in carrito:
-            codigo_item = str(item.get('codigo', '')).strip().upper()
-            cantidad_pedida = int(item.get('cantidad', 1))
+        try:
+            response = requests.post(url_script, json=payload)
+            resultado = response.json()
+            if resultado.get("status") == "success":
+                print(f"✅ Stock actualizado para el código {codigo}. Nuevo stock: {resultado.get('nuevo_stock')}")
+            else:
+                print(f"⚠️ No se encontró el código {codigo} en la planilla.")
+        except Exception as e:
+            print(f"❌ Error crítico al conectar con Google Script: {e}")
+            return False
+    return True ---
+def https://script.google.com/macros/s/AKfycby44s8lV8-9KOq3LIHOboIPnDk59MnVEP-h6ZEDfMdi1-psS-R44uE1wNC7d1HAPUX7aA/exec
             
             if not codigo_item:
                 continue
