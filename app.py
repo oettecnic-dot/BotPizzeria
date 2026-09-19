@@ -5,7 +5,6 @@ import time
 from functools import wraps
 import pandas as pd
 import gspread
-from google.oauth2.service_account import Credentials
 from flask import Flask, request, render_template_string, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
 
@@ -17,7 +16,7 @@ logging.basicConfig(
 
 app = Flask(__name__)
 
-# ID de Google Sheets obtenido de forma segura desde las Variables de Entorno de Render
+# ID de Google Sheets obtenido desde las Variables de Entorno de Render
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1GB6AVyHP4N63i4FrKXw6I1DR087Mm5F0xEGYnF_0_Fk")
 
 # Memoria temporal para los carritos, estados de pago y nombres de cada cliente/sesión
@@ -26,72 +25,59 @@ pagos_clientes = {}
 nombres_clientes = {}
 pidiendo_nombre = {}
 
-# --- CONFIGURACIÓN DE GSPREAD PARA ESCRITURA EN GOOGLE SHEETS ---
-def obtener_cliente_gspread():
-    """Conecta con Google Sheets usando credenciales de entorno o archivo local JSON."""
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    # Si tienes las credenciales en un archivo local 'credenciales.json':
-    if os.path.exists("credenciales.json"):
-        creds = Credentials.from_service_account_file("credenciales.json", scopes=scopes)
-        return gspread.authorize(creds)
-    
-    # Opcional: Si configuras las credenciales directamente en las variables de entorno de Render
-    # (puedes adaptar esto si prefieres usar gspread.service_account())
-    return gspread.service_account(filename="credenciales.json")
-
 # --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS ---
 def actualizar_stock_google_sheets(carrito):
-    """Recorre el carrito confirmado y descuenta las unidades en la pestaña 'Menu y Productos'."""
+    """Busca cada producto del carrito por su Código y descuenta el stock en la Columna C ('Stock')."""
     try:
-        gc = obtener_cliente_gspread()
-        sh = gc.open_by_url(f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}")
-        worksheet = sh.worksheet("Menu y Productos")
+        # Autenticación con servicio de Google Sheets
+        gc = gspread.service_account(filename="credenciales.json")
+        sh = gc.open_by_key(GOOGLE_SHEET_ID)
         
-        # Traemos todos los registros para buscar filas y columnas dinámicamente
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
+        pestañas = ["Menu y Productos", "Promociones y Combos"]
         
         for item in carrito:
-            codigo_item = str(item['codigo']).strip().lower()
-            cantidad_comprada = int(item.get('cantidad', 1))
+            codigo_item = str(item.get('codigo', '')).strip().upper()
+            cantidad_pedida = int(item.get('cantidad', 1))
             
-            # Buscamos la fila que coincida con el código del producto
-            for index, row in df.iterrows():
-                # Asumimos que la columna del código se llama 'Codigo' o similar
-                col_codigo_val = str(row.get('Codigo', row.iloc[0])).strip().lower()
-                
-                if col_codigo_val == codigo_item:
-                    # Las filas en gspread (para update_cell) comienzan en 2 (la fila 1 es el encabezado)
-                    fila_excel = index + 2 
+            if not codigo_item:
+                continue
+
+            for nombre_pestaña in pestañas:
+                try:
+                    worksheet = sh.worksheet(nombre_pestaña)
+                    # Buscamos el código en la primera columna (Columna A: Codigo)
+                    celda_codigo = worksheet.find(codigo_item, in_column=1)
                     
-                    # Buscamos la columna de Stock (ej. 'Stock' o 'Cantidad')
-                    # Intentamos ubicar el nombre de la columna de stock
-                    col_stock_name = None
-                    for col in df.columns:
-                        if 'stock' in col.lower() or 'cantidad' in col.lower() or 'disponible' in col.lower():
-                            col_stock_name = col
-                            break
-                    
-                    if col_stock_name:
-                        col_idx = df.columns.get_loc(col_stock_name) + 1
-                        stock_actual = int(row[col_stock_name])
-                        nuevo_stock = max(0, stock_actual - cantidad_comprada)
+                    if celda_codigo:
+                        fila = celda_codigo.row
+                        
+                        # Buscamos dinámicamente el índice de la columna 'Stock' (por defecto Columna 3 / C)
+                        encabezados = worksheet.row_values(1)
+                        col_stock_idx = 3
+                        for idx, h in enumerate(encabezados, start=1):
+                            if 'stock' in str(h).lower():
+                                col_stock_idx = idx
+                                break
+                        
+                        # Leemos el stock actual
+                        val_actual = worksheet.cell(fila, col_stock_idx).value
+                        stock_actual = int(val_actual) if val_actual and str(val_actual).isdigit() else 0
+                        
+                        # Calculamos el nuevo stock (sin bajar de 0)
+                        nuevo_stock = max(0, stock_actual - cantidad_pedida)
                         
                         # Actualizamos la celda en Google Sheets
-                        worksheet.update_cell(fila_excel, col_idx, nuevo_stock)
-                        logging.info(f"Stock actualizado: Producto {codigo_item} pasó de {stock_actual} a {nuevo_stock}.")
-                    break
-        
-        # Limpiamos la caché para que la próxima lectura traiga el stock actualizado
-        obtener_datos_excel.cache_clear() if hasattr(obtener_datos_excel, 'cache_clear') else None
-        
-    except Exception as e:
-        logging.error(f"Error al descontar stock en Google Sheets: {e}")
+                        worksheet.update_cell(fila, col_stock_idx, nuevo_stock)
+                        logging.info(f"✅ Stock descontado en '{nombre_pestaña}': {codigo_item} de {stock_actual} a {nuevo_stock}")
+                        break
+                except Exception as ex_pestaña:
+                    logging.warning(f"No se pudo actualizar en la pestaña '{nombre_pestaña}': {ex_pestaña}")
+                    continue
 
-# --- DECORADOR DE CACHÉ TTL (Expira cada 5 minutos / 300 segundos) ---
+    except Exception as e:
+        logging.error(f"⚠️ Error general al descontar stock en Google Sheets: {e}")
+
+# --- DECORADOR DE CACHÉ TTL (Expira cada 5 minutos) ---
 def ttl_cache(ttl_seconds=300):
     def decorator(func):
         cache = {}
@@ -102,7 +88,7 @@ def ttl_cache(ttl_seconds=300):
             if key in cache:
                 result, timestamp = cache[key]
                 if now - timestamp < ttl_seconds:
-                    logging.info("⚡ Usando datos en caché de Google Sheets (sin llamadas externas).")
+                    logging.info("⚡ Usando datos en caché de Google Sheets.")
                     return result
             
             logging.info("🔄 Descargando datos frescos desde Google Sheets...")
@@ -112,7 +98,7 @@ def ttl_cache(ttl_seconds=300):
         return wrapper
     return decorator
 
-# Función auxiliar para leer los datos de Google Sheets con Caché integrada
+# Función auxiliar para leer los datos de Google Sheets
 @ttl_cache(ttl_seconds=300)
 def obtener_datos_excel():
     try:
@@ -129,13 +115,12 @@ def obtener_datos_excel():
         logging.error(f"Error al leer Google Sheets: {e}")
         return None, None
 
-# Función para limpiar caracteres especiales que rompen el XML de WhatsApp/Twilio
 def limpiar_texto(texto):
     if pd.isna(texto):
         return ""
-    return str(texto).replace('&', 'y')
+    return str(texto).replace('&', 'y').strip()
 
-# --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
+# --- LÓGICA CENTRAL DEL BOT ---
 def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
     msg_lower = incoming_msg.strip().lower()
     logging.info(f"Mensaje recibido de [{remitente}] ({profile_name}): {incoming_msg}")
@@ -152,7 +137,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
 
     respuesta_texto = ""
 
-    # 0. PRIORIDAD 1: Selección de método de pago
+    # 0. PRIORIDAD 1: Selección de método de pago y confirmación final
     if pagos_clientes[remitente] == "pendiente":
         if msg_lower in ["1", "2", "3"]:
             carrito = carritos_clientes.get(remitente, [])
@@ -169,7 +154,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
                 metodo = "Mercado Pago"
                 instrucciones = "Podés abonar con dinero en cuenta al momento de recibir o solicitar link de pago."
 
-            # 🚀 AQUÍ DESCONTAMOS EL STOCK EN GOOGLE SHEETS AUTOMÁTICAMENTE
+            # 🚀 DESCUENTO AUTOMÁTICO DE STOCK
             actualizar_stock_google_sheets(carrito)
 
             respuesta_texto = (
@@ -181,7 +166,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             )
             carritos_clientes[remitente] = []
             pagos_clientes[remitente] = "finalizado"
-            logging.info(f"Pedido finalizado y stock descontado para {nombre_cliente} ({remitente}). Total: ${total_apagar}")
+            logging.info(f"Pedido finalizado con éxito para {nombre_cliente} ({remitente}).")
         else:
             respuesta_texto = "⚠️ Por favor, respondé con un número válido para el pago:\n1️⃣ Efectivo\n2️⃣ Transferencia\n3️⃣ Mercado Pago"
 
@@ -201,73 +186,76 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         respuesta_texto = (
             f"¡Mucho gusto, *{limpiar_texto(incoming_msg)}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
-            "1️⃣ Ver Menú Completo (Pizzas, Empanadas, Sándwiches, Bebidas y más) 📋\n"
+            "1️⃣ Ver Menú Completo (Pizzas, Empanadas, Sándwiches, Bebidas) 📋\n"
             "2️⃣ Buscar producto por Código 🔍\n"
             "3️⃣ Promos y Combos 🎉\n\n"
-            "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
+            "💡 También podés escribir directamente el código de cualquier producto (ej: P01, E02, S01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo desde Google Sheets
+    # 3. Opción 1: Menú Completo
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
             catalogo_resumen = "📋 *Menú Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
             
-            col_categoria = None
-            for col in df_menu.columns:
-                if 'categor' in col.lower():
-                    col_categoria = col
-                    break
-            
+            col_categoria = next((c for c in df_menu.columns if 'producto' in c.lower()), None)
+            col_variedad = next((c for c in df_menu.columns if 'variedad' in c.lower()), None)
+            col_codigo = next((c for c in df_menu.columns if 'codigo' in c.lower()), df_menu.columns[0])
+            col_precio = next((c for c in df_menu.columns if 'precio' in c.lower()), df_menu.columns[-1])
+
             if col_categoria:
                 for categoria, grupo in df_menu.groupby(col_categoria):
                     catalogo_resumen += f"*{str(categoria).upper()}*\n"
                     for _, row in grupo.iterrows():
-                        codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                        nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
-                        precio = row.get('Precio ($)', row.iloc[-1])
-                        catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                        codigo = limpiar_texto(row.get(col_codigo, ''))
+                        variedad = limpiar_texto(row.get(col_variedad, '')) if col_variedad else ""
+                        nombre_item = f"{categoria} {variedad}".strip() if variedad else str(categoria)
+                        precio = row.get(col_precio, 0)
+                        catalogo_resumen += f"• `{codigo}` - {nombre_item}: ${precio}\n"
                     catalogo_resumen += "\n"
             else:
                 for _, row in df_menu.iterrows():
-                    codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                    nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
-                    precio = row.get('Precio ($)', row.iloc[-1])
-                    catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                    codigo = limpiar_texto(row.get(col_codigo, ''))
+                    variedad = limpiar_texto(row.get(col_variedad, ''))
+                    precio = row.get(col_precio, 0)
+                    catalogo_resumen += f"• `{codigo}` - {variedad}: ${precio}\n"
 
             catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             respuesta_texto = catalogo_resumen
         else:
             respuesta_texto = "📋 *Menú Completo*\n\nNo se pudo conectar con Google Sheets en este momento."
 
-    # 4. Opción 2: Consultar por código de producto
+    # 4. Opción 2: Consultar por código
     elif msg_lower == "2":
         respuesta_texto = (
             "🔍 *Consulta por Producto por Código*\n\n"
-            "Por favor, escribí el código exacto del producto que querés pedir (por ejemplo: `P01` para pizzas, `S01` para sándwiches, `B01` para bebidas) y lo sumaremos automáticamente a tu carrito."
+            "Por favor, escribí el código exacto del producto (por ejemplo: `P01` para pizzas, `E01` para empanadas) y lo sumaremos a tu carrito."
         )
 
-    # 5. Opción 3: Promos y Combos desde Google Sheets
+    # 5. Opción 3: Promos y Combos
     elif msg_lower == "3":
         _, df_promos = obtener_datos_excel()
         if df_promos is not None:
             promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
+            col_cod = next((c for c in df_promos.columns if 'codigo' in c.lower()), df_promos.columns[0])
+            col_prod = next((c for c in df_promos.columns if 'producto' in c.lower() or 'nombre' in c.lower()), df_promos.columns[1])
+            col_prec = next((c for c in df_promos.columns if 'precio' in c.lower()), df_promos.columns[-1])
+
             for _, row in df_promos.iterrows():
-                codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
-                desc = limpiar_texto(row.get('Descripción/Ingredientes', ''))
-                precio = row.get('Precio ($)', row.iloc[-1])
-                promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
-            promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
+                codigo = limpiar_texto(row.get(col_cod, ''))
+                nombre = limpiar_texto(row.get(col_prod, ''))
+                precio = row.get(col_prec, 0)
+                promos_resumen += f"• *{codigo}* - *{nombre}*\n  Precio: *${precio}*\n\n"
+            promos_resumen += "*(Escribí el código de la promo para sumarla a tu pedido).* "
             respuesta_texto = promos_resumen
         else:
-            respuesta_texto = "🎉 *Promos y Combos*\n\nNo se pudieron cargar las promociones desde Google Sheets."
+            respuesta_texto = "🎉 *Promos y Combos*\n\nNo se pudieron cargar las promociones."
 
     # 6. Ver total / carrito
     elif msg_lower in ["total", "carrito", "pedido"]:
         carrito = carritos_clientes[remitente]
         if not carrito:
-            respuesta_texto = "🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto o combo (ej: `P01`) para empezar a sumar a tu pedido."
+            respuesta_texto = "🛒 *Tu carrito está vacío.*\n\nEscribí un código de producto (ej: `P01`) para empezar a sumar."
         else:
             detalle = "🛒 *Resumen de tu Pedido:*\n\n"
             total_apagar = 0
@@ -299,27 +287,44 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             )
 
     else:
-        # Búsqueda global de códigos en Google Sheets (tanto en Menú como en Promos)
+        # Búsqueda global por código de producto o combo
         df_menu, df_promos = obtener_datos_excel()
         producto_encontrado = None
         
         if df_menu is not None:
-            match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
+            col_cod = next((c for c in df_menu.columns if 'codigo' in c.lower()), df_menu.columns[0])
+            match = df_menu[df_menu[col_cod].astype(str).str.strip().str.lower() == incoming_msg.lower()]
             if not match.empty:
+                row = match.iloc[0]
+                col_prod = next((c for c in df_menu.columns if 'producto' in c.lower()), '')
+                col_var = next((c for c in df_menu.columns if 'variedad' in c.lower()), '')
+                col_prec = next((c for c in df_menu.columns if 'precio' in c.lower()), df_menu.columns[-1])
+                
+                prod_str = limpiar_texto(row.get(col_prod, ''))
+                var_str = limpiar_texto(row.get(col_var, ''))
+                nombre_comp = f"{prod_str} {var_str}".strip() if var_str else prod_str
+                
                 producto_encontrado = {
-                    'codigo': incoming_msg.lower(),
-                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
-                    'precio': float(match.iloc[0]['Precio ($)']),
+                    'codigo': incoming_msg.strip().upper(),
+                    'nombre': nombre_comp,
+                    'precio': float(row.get(col_prec, 0)),
                     'cantidad': 1
                 }
-        
+
         if not producto_encontrado and df_promos is not None:
-            match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
+            col_cod = next((c for c in df_promos.columns if 'codigo' in c.lower()), df_promos.columns[0])
+            match = df_promos[df_promos[col_cod].astype(str).str.strip().str.lower() == incoming_msg.lower()]
             if not match.empty:
+                row = match.iloc[0]
+                col_prod = next((c for c in df_promos.columns if 'producto' in c.lower() or 'nombre' in c.lower()), df_promos.columns[1])
+                col_prec = next((c for c in df_promos.columns if 'precio' in c.lower()), df_promos.columns[-1])
+                
+                nombre_comp = limpiar_texto(row.get(col_prod, ''))
+                
                 producto_encontrado = {
-                    'codigo': incoming_msg.lower(),
-                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
-                    'precio': float(match.iloc[0]['Precio ($)']),
+                    'codigo': incoming_msg.strip().upper(),
+                    'nombre': nombre_comp,
+                    'precio': float(row.get(col_prec, 0)),
                     'cantidad': 1
                 }
 
@@ -443,7 +448,7 @@ def bot_whatsapp():
     profile_name = request.values.get('ProfileName', 'Cliente')
     
     resp = MessagingResponse()
-    respuesta = procesar_logica_bot(remitente, incoming_msg, profile_name, profile_name)
+    respuesta = procesar_logica_bot(remitente, incoming_msg, profile_name)
     
     resp.message(respuesta)
     return str(resp)
