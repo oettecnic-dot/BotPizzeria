@@ -25,11 +25,11 @@ pagos_clientes = {}
 nombres_clientes = {}
 pidiendo_nombre = {}
 
-# --- FUNCIÓN PARA DESCONTAR STOCK EN GOOGLE SHEETS ---
+# --- FUNCIÓN CORREGIDA PARA DESCONTAR STOCK EN GOOGLE SHEETS ---
 def actualizar_stock_google_sheets(carrito):
     """Busca cada producto del carrito por su Código y descuenta el stock en la Columna C ('Stock')."""
     try:
-        # Autenticación con servicio de Google Sheets
+        # Autenticación con gspread usando credenciales locales o configuradas
         gc = gspread.service_account(filename="credenciales.json")
         sh = gc.open_by_key(GOOGLE_SHEET_ID)
         
@@ -45,37 +45,41 @@ def actualizar_stock_google_sheets(carrito):
             for nombre_pestaña in pestañas:
                 try:
                     worksheet = sh.worksheet(nombre_pestaña)
-                    # Buscamos el código en la primera columna (Columna A: Codigo)
-                    celda_codigo = worksheet.find(codigo_item, in_column=1)
                     
-                    if celda_codigo:
-                        fila = celda_codigo.row
+                    # Obtenemos todos los valores de la primera columna (códigos) para buscar la fila exacta
+                    columna_codigos = worksheet.col_values(1)
+                    
+                    fila_encontrada = None
+                    for idx, val in enumerate(columna_codigos, start=1):
+                        if str(val).strip().upper() == codigo_item:
+                            fila_encontrada = idx
+                            break
+                    
+                    if fila_encontrada:
+                        # Columna C corresponde al Stock (Columna 3 según tu planilla)
+                        col_stock_idx = 3 
                         
-                        # Buscamos dinámicamente el índice de la columna 'Stock' (por defecto Columna 3 / C)
-                        encabezados = worksheet.row_values(1)
-                        col_stock_idx = 3
-                        for idx, h in enumerate(encabezados, start=1):
-                            if 'stock' in str(h).lower():
-                                col_stock_idx = idx
-                                break
-                        
-                        # Leemos el stock actual
-                        val_actual = worksheet.cell(fila, col_stock_idx).value
+                        # Leemos el valor actual de la celda de stock
+                        val_actual = worksheet.cell(fila_encontrada, col_stock_idx).value
                         stock_actual = int(val_actual) if val_actual and str(val_actual).isdigit() else 0
                         
-                        # Calculamos el nuevo stock (sin bajar de 0)
+                        # Calculamos el nuevo stock evitando números negativos
                         nuevo_stock = max(0, stock_actual - cantidad_pedida)
                         
                         # Actualizamos la celda en Google Sheets
-                        worksheet.update_cell(fila, col_stock_idx, nuevo_stock)
-                        logging.info(f"✅ Stock descontado en '{nombre_pestaña}': {codigo_item} de {stock_actual} a {nuevo_stock}")
+                        worksheet.update_cell(fila_encontrada, col_stock_idx, nuevo_stock)
+                        logging.info(f"✅ [STOCK DESCONTADO] Pestaña '{nombre_pestaña}' | Código: {codigo_item} | Stock anterior: {stock_actual} | Nuevo stock: {nuevo_stock}")
                         break
                 except Exception as ex_pestaña:
                     logging.warning(f"No se pudo actualizar en la pestaña '{nombre_pestaña}': {ex_pestaña}")
                     continue
 
+        # Limpiamos la caché para que la próxima lectura traiga el stock actualizado
+        if hasattr(obtener_datos_excel, 'cache_clear'):
+            obtener_datos_excel.cache_clear()
+
     except Exception as e:
-        logging.error(f"⚠️ Error general al descontar stock en Google Sheets: {e}")
+        logging.error(f"⚠️ Error crítico al descontar stock en Google Sheets: {e}")
 
 # --- DECORADOR DE CACHÉ TTL (Expira cada 5 minutos) ---
 def ttl_cache(ttl_seconds=300):
@@ -98,7 +102,7 @@ def ttl_cache(ttl_seconds=300):
         return wrapper
     return decorator
 
-# Función auxiliar para leer los datos de Google Sheets
+# Función auxiliar para leer los datos de Google Sheets con Caché
 @ttl_cache(ttl_seconds=300)
 def obtener_datos_excel():
     try:
@@ -154,7 +158,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
                 metodo = "Mercado Pago"
                 instrucciones = "Podés abonar con dinero en cuenta al momento de recibir o solicitar link de pago."
 
-            # 🚀 DESCUENTO AUTOMÁTICO DE STOCK
+            # 🚀 DISPARA EL DESCUENTO AUTOMÁTICO DE STOCK EN GOOGLE SHEETS
             actualizar_stock_google_sheets(carrito)
 
             respuesta_texto = (
