@@ -132,31 +132,31 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         respuesta_texto = (
             f"¡Mucho gusto, *{limpiar_texto(incoming_msg)}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
-            "1️⃣ Ver Menú Completo (Pizzas, Empanadas, Sándwiches, Bebidas y más) 📋\n"
+            "1️⃣ Ver Menú por Categorías 📋\n"
             "2️⃣ Buscar producto por Código 🔍\n"
             "3️⃣ Promos y Combos 🎉\n\n"
             "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo (Estructura: A=0, B=1, C=2, D=3, E=4)
-    elif msg_lower == "1":
+    # 3. Opción 1: Menú Organizado por Categorías (Optimizado para WhatsApp sin exceder límites)
+    elif msg_lower == "1" or msg_lower in ["categorias", "categorías"]:
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
-            catalogo_resumen = "📋 *Menú Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
+            catalogo_resumen = "📋 *Menú por Categorías - Pizzería* 🍕\n\n"
             
-            # Columna B es Categoría (Índice 1)
-            for categoria, grupo in df_menu.groupby(df_menu.columns[1]):
-                catalogo_resumen += f"*{str(categoria).upper()}*\n"
+            # Obtener las categorías únicas de la columna B (Índice 1)
+            col_cat = df_menu.columns[1]
+            categorias = df_menu[col_cat].dropna().unique()
+            
+            for cat in categorias:
+                catalogo_resumen += f"🔸 *{str(cat).upper()}*\n"
+                # Filtrar productos de esta categoría
+                grupo = df_menu[df_menu[col_cat] == cat]
                 for _, row in grupo.iterrows():
                     codigo = limpiar_texto(row.iloc[0])   # Columna A: Código
                     nombre = limpiar_texto(row.iloc[2])   # Columna C: Producto/Variedad
-                    desc = limpiar_texto(row.iloc[3]) if len(row) > 3 else "" # Columna D: Descripción/Ingredientes
                     precio = row.iloc[4]                  # Columna E: Precio ($)
-                    
-                    if desc:
-                        catalogo_resumen += f"• `{codigo}` - *{nombre}*\n  _{desc}_\n  Precio: ${precio}\n\n"
-                    else:
-                        catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                    catalogo_resumen += f"   • `{codigo}` - {nombre}: ${precio}\n"
                 catalogo_resumen += "\n"
 
             catalogo_resumen += "*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
