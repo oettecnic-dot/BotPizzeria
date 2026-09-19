@@ -45,7 +45,7 @@ def ttl_cache(ttl_seconds=300):
         return wrapper
     return decorator
 
-# Función auxiliar para leer los datos de Google Sheets con Caché integrada
+# Función auxiliar para leer los datos de Google Sheets con Caché integrada y nombres estandarizados
 @ttl_cache(ttl_seconds=300)
 def obtener_datos_excel():
     try:
@@ -55,18 +55,23 @@ def obtener_datos_excel():
         url_menu = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_menu}"
         url_promos = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_promos}"
         
+        # Leemos el CSV y renombramos las columnas de forma fija para evitar cualquier KeyError
         df_menu = pd.read_csv(url_menu)
+        df_menu.columns = ['codigo', 'categoria', 'nombre', 'descripcion', 'precio']
+        
         df_promos = pd.read_csv(url_promos)
+        df_promos.columns = ['codigo', 'categoria', 'nombre', 'descripcion', 'precio']
+        
         return df_menu, df_promos
     except Exception as e:
         logging.error(f"Error al leer Google Sheets: {e}")
         return None, None
 
-# Función para limpiar caracteres especiales que rompen el XML de WhatsApp/Twilio
+# Función reforzada para limpiar caracteres especiales que rompen el XML de WhatsApp/Twilio
 def limpiar_texto(texto):
     if pd.isna(texto):
         return ""
-    return str(texto).replace('&', 'y')
+    return str(texto).replace('&', 'y').replace('<', '').replace('>', '').replace('"', '').replace("'", "")
 
 # --- LÓGICA CENTRAL DEL BOT (Compartida entre WhatsApp y Web) ---
 def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
@@ -80,7 +85,6 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
     if remitente not in pidiendo_nombre:
         pidiendo_nombre[remitente] = False
 
-    # Si WhatsApp manda el nombre de perfil y todavía no lo tenemos guardado, lo precargamos
     if profile_name and remitente not in nombres_clientes:
         nombres_clientes[remitente] = profile_name
 
@@ -92,7 +96,6 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             carrito = carritos_clientes.get(remitente, [])
             total_apagar = sum(item['precio'] for item in carrito)
             
-            # Corrección: Aseguramos la búsqueda correcta del nombre del cliente
             nombre_cliente = nombres_clientes.get(remitente) or profile_name or "Cliente"
             
             if msg_lower == "1":
@@ -134,41 +137,23 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         respuesta_texto = (
             f"¡Mucho gusto, *{limpiar_texto(incoming_msg)}*! 🍕👍\n\n"
             "¿Qué deseas ver hoy? Elegí una opción:\n"
-            "1️⃣ Ver Menú Completo (Pizzas, Empanadas, Sándwiches, Bebidas y más) 📋\n"
+            "1️⃣ Ver Menú por Categorías 📋\n"
             "2️⃣ Buscar producto por Código 🔍\n"
             "3️⃣ Promos y Combos 🎉\n\n"
             "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo desde Google Sheets
-    elif msg_lower == "1":
+    # 3. Opción 1: Muestra las categorías disponibles
+    elif msg_lower == "1" or msg_lower in ["categorias", "categorías"]:
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
-            catalogo_resumen = "📋 *Menú Completo - Pizzería Pedidos y Delivery* 🍕\n\n"
+            categorias = df_menu['categoria'].dropna().unique()
             
-            col_categoria = None
-            for col in df_menu.columns:
-                if 'categor' in col.lower():
-                    col_categoria = col
-                    break
+            catalogo_resumen = "📋 *Categorías del Menú* 🍕\n\nEscribí el nombre de la categoría que querés consultar:\n\n"
+            for cat in categorias:
+                catalogo_resumen += f"🔸 *{str(cat).upper()}*\n"
             
-            if col_categoria:
-                for categoria, grupo in df_menu.groupby(col_categoria):
-                    catalogo_resumen += f"*{str(categoria).upper()}*\n"
-                    for _, row in grupo.iterrows():
-                        codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                        nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
-                        precio = row.get('Precio ($)', row.iloc[-1])
-                        catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
-                    catalogo_resumen += "\n"
-            else:
-                for _, row in df_menu.iterrows():
-                    codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                    nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
-                    precio = row.get('Precio ($)', row.iloc[-1])
-                    catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
-
-            catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
+            catalogo_resumen += "\n*(Ejemplo: escribí 'Pizzas' o 'Bebidas' para ver los productos).* "
             respuesta_texto = catalogo_resumen
         else:
             respuesta_texto = "📋 *Menú Completo*\n\nNo se pudo conectar con Google Sheets en este momento."
@@ -186,10 +171,10 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         if df_promos is not None:
             promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
             for _, row in df_promos.iterrows():
-                codigo = limpiar_texto(row.get('Codigo', row.iloc[0]))
-                nombre = limpiar_texto(row.get('Producto/ Variedad', row.iloc[1]))
-                desc = limpiar_texto(row.get('Descripción/Ingredientes', ''))
-                precio = row.get('Precio ($)', row.iloc[-1])
+                codigo = limpiar_texto(row['codigo'])
+                nombre = limpiar_texto(row['nombre'])
+                desc = limpiar_texto(row['descripcion'])
+                precio = row['precio']
                 promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
             respuesta_texto = promos_resumen
@@ -232,41 +217,65 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             )
 
     else:
-        # Búsqueda global de códigos en Google Sheets
+        # Búsqueda: Primero revisa si el usuario escribió el nombre de una categoría
         df_menu, df_promos = obtener_datos_excel()
-        producto_encontrado = None
+        encontrado_por_categoria = False
         
         if df_menu is not None:
-            match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
-            if not match.empty:
-                producto_encontrado = {
-                    'nombre': limpiar_texto(match.iloc[0]['Producto/Variedad']),
-                    'precio': float(match.iloc[0]['Precio ($)'])
-                }
-        
-        if not producto_encontrado and df_promos is not None:
-            match = df_promos[df_promos['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
-            if not match.empty:
-                producto_encontrado = {
-                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
-                    'precio': float(match.iloc[0]['Precio ($)'])
-                }
+            categorias_disponibles = df_menu['categoria'].dropna().unique()
+            for cat in categorias_disponibles:
+                if str(cat).strip().lower() == msg_lower:
+                    encontrado_por_categoria = True
+                    cat_resumen = f"📋 *Categoría: {str(cat).upper()}* 🍕\n\n"
+                    grupo = df_menu[df_menu['categoria'] == cat]
+                    for _, row in grupo.iterrows():
+                        codigo = limpiar_texto(row['codigo'])
+                        nombre = limpiar_texto(row['nombre'])
+                        desc = limpiar_texto(row['descripcion'])
+                        precio = row['precio']
+                        if desc:
+                            cat_resumen += f"• `{codigo}` - *{nombre}*\n  _{desc}_\n  Precio: ${precio}\n\n"
+                        else:
+                            cat_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                    cat_resumen += "*(Escribí el código del producto para sumarlo).* "
+                    respuesta_texto = cat_resumen
+                    break
 
-        if producto_encontrado:
-            carritos_clientes[remitente].append(producto_encontrado)
-            total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
-            respuesta_texto = (
-                f"✅ ¡Agregado a tu pedido!\n"
-                f"• *{producto_encontrado['nombre']}* (${producto_encontrado['precio']})\n\n"
-                f"🛒 Subtotal parcial: *${total_parcial}*\n"
-                f"*(Escribí 'total' para ver tu carrito o seguí agregando más productos).* "
-            )
-            logging.info(f"Producto agregado al carrito de {remitente}: {producto_encontrado['nombre']}")
-        else:
-            respuesta_texto = (
-                f"Recibimos tu mensaje: \"{incoming_msg}\".\n"
-                "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto para sumarlo a tu pedido."
-            )
+        # Si no es categoría, busca por código de producto o combo
+        if not encontrado_por_categoria:
+            producto_encontrado = None
+            
+            if df_menu is not None:
+                match = df_menu[df_menu['codigo'].astype(str).str.lower() == incoming_msg.lower()]
+                if not match.empty:
+                    producto_encontrado = {
+                        'nombre': limpiar_texto(match.iloc[0]['nombre']),
+                        'precio': float(match.iloc[0]['precio'])
+                    }
+            
+            if not producto_encontrado and df_promos is not None:
+                match = df_promos[df_promos['codigo'].astype(str).str.lower() == incoming_msg.lower()]
+                if not match.empty:
+                    producto_encontrado = {
+                        'nombre': limpiar_texto(match.iloc[0]['nombre']),
+                        'precio': float(match.iloc[0]['precio'])
+                    }
+
+            if producto_encontrado:
+                carritos_clientes[remitente].append(producto_encontrado)
+                total_parcial = sum(item['precio'] for item in carritos_clientes[remitente])
+                respuesta_texto = (
+                    f"✅ ¡Agregado a tu pedido!\n"
+                    f"• *{producto_encontrado['nombre']}* (${producto_encontrado['precio']})\n\n"
+                    f"🛒 Subtotal parcial: *${total_parcial}*\n"
+                    f"*(Escribí 'total' para ver tu carrito o seguí agregando más productos).* "
+                )
+                logging.info(f"Producto agregado al carrito de {remitente}: {producto_encontrado['nombre']}")
+            else:
+                respuesta_texto = (
+                    f"Recibimos tu mensaje: \"{incoming_msg}\".\n"
+                    "Para ver las opciones principales, escribí **'Hola'**, o enviá el código de un producto para sumarlo a tu pedido."
+                )
 
     return respuesta_texto
 
@@ -378,5 +387,5 @@ def bot_whatsapp():
     return str(resp)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False) 
