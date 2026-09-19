@@ -240,7 +240,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             match = df_menu[df_menu['Codigo'].astype(str).str.lower() == incoming_msg.lower()]
             if not match.empty:
                 producto_encontrado = {
-                    'nombre': limpiar_texto(match.iloc[0]['Producto/ Variedad']),
+                    'nombre': limpiar_texto(match.iloc[0]['Producto/Variedad']),
                     'precio': float(match.iloc[0]['Precio ($)'])
                 }
         
