@@ -138,7 +138,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             "💡 También podés escribir directamente el código de cualquier producto o combo (ej: P14, S02, B01) para sumarlo."
         )
 
-    # 3. Opción 1: Menú Completo usando la estructura exacta (A=0, B=1, C=2, D=3, E=4)
+    # 3. Opción 1: Menú Completo (Estructura: A=0, B=1, C=2, D=3, E=4)
     elif msg_lower == "1":
         df_menu, _ = obtener_datos_excel()
         if df_menu is not None:
@@ -148,13 +148,18 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
             for categoria, grupo in df_menu.groupby(df_menu.columns[1]):
                 catalogo_resumen += f"*{str(categoria).upper()}*\n"
                 for _, row in grupo.iterrows():
-                    codigo = limpiar_texto(row.iloc[0])   # Columna A
-                    nombre = limpiar_texto(row.iloc[2])   # Columna C (Producto/Variedad)
-                    precio = row.iloc[4]                  # Columna E (Precio)
-                    catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
+                    codigo = limpiar_texto(row.iloc[0])   # Columna A: Código
+                    nombre = limpiar_texto(row.iloc[2])   # Columna C: Producto/Variedad
+                    desc = limpiar_texto(row.iloc[3]) if len(row) > 3 else "" # Columna D: Descripción/Ingredientes
+                    precio = row.iloc[4]                  # Columna E: Precio ($)
+                    
+                    if desc:
+                        catalogo_resumen += f"• `{codigo}` - *{nombre}*\n  _{desc}_\n  Precio: ${precio}\n\n"
+                    else:
+                        catalogo_resumen += f"• `{codigo}` - {nombre}: ${precio}\n"
                 catalogo_resumen += "\n"
 
-            catalogo_resumen += "\n*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
+            catalogo_resumen += "*(Escribí el código del producto para sumarlo a tu pedido o 'total' para ver tu carrito).* "
             respuesta_texto = catalogo_resumen
         else:
             respuesta_texto = "📋 *Menú Completo*\n\nNo se pudo conectar con Google Sheets en este momento."
@@ -172,10 +177,10 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
         if df_promos is not None:
             promos_resumen = "🎉 *Promos y Combos Vigentes* 🍕🍻\n\n"
             for _, row in df_promos.iterrows():
-                codigo = limpiar_texto(row.iloc[0])
-                nombre = limpiar_texto(row.iloc[2]) if len(row) > 2 else limpiar_texto(row.iloc[1])
-                desc = limpiar_texto(row.iloc[3]) if len(row) > 3 else ""
-                precio = row.iloc[4] if len(row) > 4 else row.iloc[-1]
+                codigo = limpiar_texto(row.iloc[0])   # Columna A
+                nombre = limpiar_texto(row.iloc[2])   # Columna C
+                desc = limpiar_texto(row.iloc[3]) if len(row) > 3 else "" # Columna D
+                precio = row.iloc[4] if len(row) > 4 else row.iloc[-1]   # Columna E
                 promos_resumen += f"• *{codigo}* - *{nombre}*\n  _{desc}_\n  Precio: *${precio}*\n\n"
             promos_resumen += "*(Escribí el código del combo para sumarlo a tu pedido).* "
             respuesta_texto = promos_resumen
