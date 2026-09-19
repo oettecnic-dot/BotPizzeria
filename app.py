@@ -177,7 +177,7 @@ def procesar_logica_bot(remitente, incoming_msg, profile_name=None):
     elif msg_lower == "2":
         respuesta_texto = (
             "🔍 *Consulta por Producto por Código*\n\n"
-            "Por favor, escribí el código exacto del producto que querés pedir (por ejemplo: `P01` para pizzas, `S01` para sándwiches, `B01` para bebidas) y lo sumaremos automáticamente a tu carrito."
+            "Por favor, escribí el código exacto del producto que querés pedir (por ejemplo: `P01` for pizzas, `S01` for sándwiches, `B01` for bebidas) y lo sumaremos automáticamente a tu carrito."
         )
 
     # 5. Opción 3: Promos y Combos desde Google Sheets
@@ -378,5 +378,5 @@ def bot_whatsapp():
     return str(resp)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False) 
