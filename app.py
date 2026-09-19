@@ -61,24 +61,24 @@ def whatsapp_webhook():
     texto = incoming_msg.lower()
     
     if texto == 'hola':
-        msg.text("¡Hola! Bienvenido a la pizzería. Escribí el código del producto que deseas agregar (por ejemplo: P01, E01) o escribe CONFIRMAR para finalizar tu pedido.")
+        msg.body("¡Hola! Bienvenido a la pizzería. Escribí el código del producto que deseas agregar (por ejemplo: P01, E01) o escribe CONFIRMAR para finalizar tu pedido.")
     elif texto == 'confirmar':
         carrito = carritos_clientes.get(sender_id, [])
         if not carrito:
-            msg.text("Tu carrito está vacío. Agrega productos antes de confirmar.")
+            msg.body("Tu carrito está vacío. Agrega productos antes de confirmar.")
         else:
             # Descontar stock usando la nueva función del puente web
             exito = actualizar_stock_google_sheets(carrito)
             if exito:
-                msg.text("¡Pedido confirmado con éxito! Ya hemos descontado el stock y estamos preparando tu pedido.")
+                msg.body("¡Pedido confirmado con éxito! Ya hemos descontado el stock y estamos preparando tu pedido.")
                 carritos_clientes[sender_id] = [] # Limpiar carrito
             else:
-                msg.text("Hubo un error al actualizar el stock en la planilla. Inténtalo de nuevo más tarde.")
+                msg.body("Hubo un error al actualizar el stock en la planilla. Inténtalo de nuevo más tarde.")
     else:
         # Lógica para agregar productos de ejemplo por código
         codigo_ingresado = incoming_msg.upper()
         carritos_clientes[sender_id].append({"codigo": codigo_ingresado, "cantidad": 1})
-        msg.text(f"Producto {codigo_ingresado} agregado al carrito. Escribe CONFIRMAR para terminar tu pedido o sigue agregando más.")
+        msg.body(f"Producto {codigo_ingresado} agregado al carrito. Escribe CONFIRMAR para terminar tu pedido o sigue agregando más.")
 
     return str(resp)
 
